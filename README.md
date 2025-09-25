@@ -3,7 +3,7 @@
 > A small collection of Model Context Protocol (MCP) tools, build for local LLMs. One venv, many options.
 
 ## Features
-- [Web Search](WebSearch.py): Use duckduckgo as search engine, provide agent ability to search
+- [Web Search](WebSearch.py): Use duckduckgo as search engine, fetch and summarize top results
 - [Python SandBox](python-sandbox.py): Allow Agents to run python, use numpy and sympy, good for math
 - [Longterm-Memory](Memory.py): For Agents to memories things for longterm use.
 
