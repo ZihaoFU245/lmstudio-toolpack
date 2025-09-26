@@ -180,5 +180,10 @@ def sympy_analyze(expr: str, solve_for: Optional[str] = None) -> Dict[str, Any]:
         return {"error": f"ParseError: {type(e).__name__}: {e}", "input": expr}
 
 if __name__ == "__main__":
+    from GlobalConfig import GlobalConfig
     import asyncio
-    asyncio.run(mcp.run_stdio_async())
+    
+    if GlobalConfig.transport == "http":
+        asyncio.run(mcp.run_http_async(GlobalConfig.port) if GlobalConfig.port else mcp.run_http_async()) 
+    else:
+        asyncio.run(mcp.run_stdio_async())

@@ -165,6 +165,11 @@ def remove(title: str) -> Result:
         return Result(success=False, reason="Memory file not found")
 
 if __name__ == "__main__":
+    from GlobalConfig import GlobalConfig
     import asyncio
-    asyncio.run(mcp.run_stdio_async())
+    
+    if GlobalConfig.transport == "http":
+        asyncio.run(mcp.run_http_async(GlobalConfig.port) if GlobalConfig.port else mcp.run_http_async()) 
+    else:
+        asyncio.run(mcp.run_stdio_async())
 

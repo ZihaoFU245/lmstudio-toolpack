@@ -9,5 +9,11 @@ wheels/
 # Virtual environments
 .venv
 
+# IDE files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
 # personal information
 memory.md
