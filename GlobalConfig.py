@@ -9,5 +9,5 @@ from pathlib import Path
 class GlobalConfig:
     transport: str = "stdio"
     port: Optional[int] = None
-    data_folder: Path = Path(__file__) / "data"
+    data_folder: Path = Path(__file__).parent / "data"
     
