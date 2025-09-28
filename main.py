@@ -345,9 +345,7 @@ def _clear_screen() -> None:
 
 
 def _read_key() -> _Key:
-    if os.name == "nt":
-        return _read_key_windows()
-    return _read_key_posix()
+    return _read_key_windows() if os.name == "nt" else _read_key_posix()
 
 
 def _read_key_windows() -> _Key:
