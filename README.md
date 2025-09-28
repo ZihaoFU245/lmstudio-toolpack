@@ -8,9 +8,13 @@ This tool pack is targeted for local convenient use. I will expand the collectio
 Make LocalLLMs more powerful yet simplier.
 
 ## Features
-- [Web Search](WebSearch.py): Use duckduckgo as search engine, fetch and summarize top results
-- [Python SandBox](python-sandbox.py): Allow Agents to run python, use numpy and sympy, good for math
-- [Longterm-Memory](Memory.py): For Agents to memories things for longterm use.
+- MCP json Configuration file generation: Run `main.py` and go through the wizard to complete the generation
+- One venv for multiple MCP servers
+
+## MCP Servers
+- [Web Search](/MCPs/WebSearch.py): Use duckduckgo as search engine, fetch and summarize top results
+- [Python SandBox](/MCPs/python-sandbox.py): Allow Agents to run python, use numpy and sympy, good for math
+- [Longterm-Memory](/MCPs/Memory.py): For Agents to memories things for longterm use.
 
 ## Notes
 It is default using **stdio**
@@ -33,22 +37,33 @@ python python-sandbox.py
 The server communicates over stdio (FastMCP). Point your MCP-compatible client at the executable command above.
 
 ## Tool Usage Examples
-
-In LM studio mcp.json:
+Run `main.py` for json configuration auto generation.
+And you will get something like this:
 ```json
 {
   "mcpServers": {
-    "server-name": {
-      "command": "path\\to\\venv\\python",
+    "memory": {
+      "command": "E:\\LMStudio\\mcp\\lmstudio-toolpack\\.venv\\Scripts\\python.exe",
       "args": [
-        "path\\to\\tool\\file"
-      ],
-      "env": {
-        "PYTHONUNBUFFERED": "1"
-      }
+        "E:\\LMStudio\\mcp\\lmstudio-toolpack\\MCPs\\Memory.py"
+      ]
+    },
+    "python-sandbox": {
+      "command": "E:\\LMStudio\\mcp\\lmstudio-toolpack\\.venv\\Scripts\\python.exe",
+      "args": [
+        "E:\\LMStudio\\mcp\\lmstudio-toolpack\\MCPs\\python-sandbox.py"
+      ]
+    },
+    "websearch": {
+      "command": "E:\\LMStudio\\mcp\\lmstudio-toolpack\\.venv\\Scripts\\python.exe",
+      "args": [
+        "E:\\LMStudio\\mcp\\lmstudio-toolpack\\MCPs\\WebSearch.py"
+      ]
     }
+  }
 }
 ```
+Change the name if you needed
 
 ## Another Idea
 If you choose using http. You can use 1mcp to unify them all.

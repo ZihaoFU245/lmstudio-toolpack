@@ -180,6 +180,9 @@ def sympy_analyze(expr: str, solve_for: Optional[str] = None) -> Dict[str, Any]:
         return {"error": f"ParseError: {type(e).__name__}: {e}", "input": expr}
 
 if __name__ == "__main__":
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent.parent))
     from GlobalConfig import GlobalConfig
     import asyncio
     

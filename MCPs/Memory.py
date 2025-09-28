@@ -9,6 +9,12 @@ import tempfile
 import shutil
 import os
 
+"""Configuration imports"""
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from GlobalConfig import GlobalConfig
+import asyncio
+
 @dataclass
 class Result:
     success: bool
@@ -17,7 +23,7 @@ class Result:
 
 mcp = FastMCP("Memories")
 
-MEMORY_FILE = Path(__file__).parent / "memory.md"
+MEMORY_FILE = GlobalConfig.data_folder / "memory.md"
 
 def _ensure_memory_file() -> None:
     """Ensure the memory file and its parent directory exist."""
@@ -164,10 +170,7 @@ def remove(title: str) -> Result:
     except FileNotFoundError:
         return Result(success=False, reason="Memory file not found")
 
-if __name__ == "__main__":
-    from GlobalConfig import GlobalConfig
-    import asyncio
-    
+if __name__ == "__main__":    
     if GlobalConfig.transport == "http":
         asyncio.run(mcp.run_http_async(GlobalConfig.port) if GlobalConfig.port else mcp.run_http_async()) 
     else:

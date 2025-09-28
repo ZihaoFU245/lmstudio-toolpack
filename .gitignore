@@ -16,4 +16,4 @@ wheels/
 *.sublime-workspace
 
 # personal information
-memory.md
+data/
