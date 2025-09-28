@@ -225,6 +225,7 @@ def _build_vscode_config(choices: List[ServerChoice], transport: str) -> dict:
             "type": transport,
             "command": choice.command,
             "args": [str(choice.script_path)],
+            "env" : {}
         }
     return {"servers": servers}
 
@@ -235,6 +236,7 @@ def _build_lmstudio_config(choices: List[ServerChoice]) -> dict:
         servers[choice.slug] = {
             "command": choice.command,
             "args": [str(choice.script_path)],
+            "env" : {}
         }
     return {"mcpServers": servers}
 

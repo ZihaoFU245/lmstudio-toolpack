@@ -71,21 +71,36 @@ def remember(title: str, content: str) -> Result:
         return Result(success=False, reason="Internal error, memory file not found")
 
 @mcp.tool
-def retrieve(top_k : int = 25) -> Result:
-    """Retrieve most recent memory. Default is 25. Input should not be less than 10"""
+def retrieve(top_k: int = 50) -> Result:
+    """Retrieve most recent memory. Default is 50. Input should not be less than 10"""
     try:
         _ensure_memory_file()
         memories = []
-        with open(MEMORY_FILE, "r", encoding='utf-8') as f:
+        with open(MEMORY_FILE, "r", encoding="utf-8") as f:
+            current_title = None
+            current_content_lines = []
             for line in f:
                 if line.startswith(" * "):
-                    parts = line[3:].strip().split('\t', 1)
-                    if len(parts) == 2:
-                        title, content = parts
-                        memories.append({"title": title, "content": content})
+                    if current_title is not None:
+                        content = "".join(current_content_lines).rstrip('\n')
+                        memories.append({"title": current_title, "content": content})
                         if len(memories) >= top_k:
+                            current_title = None
                             break
-        
+                    parts = line[3:].split('\t', 1)
+                    if len(parts) == 2:
+                        current_title, initial_content = parts[0], parts[1]
+                    elif parts:
+                        current_title, initial_content = parts[0], ""
+                    else:
+                        current_title, initial_content = "", ""
+                    current_content_lines = [initial_content]
+                elif current_title is not None:
+                    current_content_lines.append(line)
+            else:
+                if current_title is not None and len(memories) < top_k:
+                    content = "".join(current_content_lines).rstrip('\n')
+                    memories.append({"title": current_title, "content": content})
         return Result(success=True, data=memories)
     except FileNotFoundError:
         return Result(success=False, reason="Memory file not found")
