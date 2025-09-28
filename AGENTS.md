@@ -1,29 +1,36 @@
-WebSearch.py is a searching tool for AI Agents. (Your target)
-
-Some websites like reddit, is blocking my tool reaching it.
-Add more details, a real browser without login can still visit. 
-
-Rewrite tool "visit_url" that extract all text from the web page including a BFS. Apply AD blocking. 
-
-The response would be 
+#folder:MCPs There are MCP servers in this folder.
+This main.py is for generating json configuation files
+Requirements:
+1. A CLI Tool
+2. Support different types, now only VScode and Lm-Studio.
+3. User can select which mcp server to add. In settings, user can choose to default select all or not select anything.
+4. Any configuration file for this CLI tool will be put in /data folder, already exists
+5. It is an interactive tool, do not allow `main.py --flag` use
+Appendix:
+For VScode, the json cionfig looks like:
 ```
-[1] Title:
-    URL: https://example.com
-    Referer: On BFS, state where is this url comming from. None if it is the input url.
-    Detail: Contents on the page
+{
+    "servers": {
+        "Web Search": {
+            "type": "stdio",
+            "command": "E:\\LMStudio\\mcp\\lmstudio-toolpack\\.venv\\Scripts\\python.exe",
+            "args": [
+                "E:\\LMStudio\\mcp\\lmstudio-toolpack\\WebSearch.py"
+            ]
+        }
+    }
+}
 ```
-Contents still need to be filtered. Keep all text and some <a> links. Filter out if the link is
-an ad. 
-
-Enforce the above new standard to "web_search" tool. 
-Remove Excerpt, replace to detail. Apply the same rule. 
-
-1. Trancation needed. 
-Each result would have an upper limit of return. If the result is too long,
-truncate it and add "The response is too long that is truncated, further reading please use visit_url tool for {{ url_traget }}"
-
-Summary:
-1. Rewrote the tools
-2. Enforce Browser simulation
-3. Replace Excerpt to Detail
-4. Prune unnecessary code if needed
+And for LM-Studio is:
+```
+{
+  "mcpServers": {
+    "web-search": {
+      "command": "E:\\LMStudio\\mcp\\lmstudio-toolpack\\.venv\\Scripts\\python.exe",
+      "args": [
+        "E:\\LMStudio\\mcp\\lmstudio-toolpack\\WebSearch.py"
+      ],
+    }
+  }
+```
+As I stated, finish the CLI tool
