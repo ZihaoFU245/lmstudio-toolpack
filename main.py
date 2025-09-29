@@ -192,10 +192,48 @@ def _prompt_server_selection_fallback(
             print(f"Ignored invalid entries: {', '.join(invalid)}")
 
 
+def _get_python_executable() -> str:
+    """
+    Get the appropriate Python executable path.
+    
+    Prefers virtual environment Python over system Python to avoid
+    issues with uv-managed Python paths that point to global Python
+    instead of the project's virtual environment.
+    
+    Returns the virtual environment's python path (not resolved symlink)
+    to ensure MCP servers use the correct environment.
+    """
+    import os
+    
+    # First, check if we're in a virtual environment
+    virtual_env = os.environ.get('VIRTUAL_ENV')
+    if virtual_env:
+        # We're in an activated virtual environment
+        venv_python = Path(virtual_env) / ('Scripts' if os.name == 'nt' else 'bin') / ('python.exe' if os.name == 'nt' else 'python')
+        if venv_python.exists():
+            return str(venv_python)  # Return the venv path, not resolved
+    
+    # Check for common virtual environment structures relative to the project
+    project_dir = Path(__file__).resolve().parent
+    possible_venv_paths = [
+        # Standard .venv location
+        project_dir / '.venv' / ('Scripts' if os.name == 'nt' else 'bin') / ('python.exe' if os.name == 'nt' else 'python'),
+        # Alternative venv location  
+        project_dir / 'venv' / ('Scripts' if os.name == 'nt' else 'bin') / ('python.exe' if os.name == 'nt' else 'python'),
+    ]
+    
+    for venv_path in possible_venv_paths:
+        if venv_path.exists():
+            return str(venv_path)  # Return the venv path, not resolved
+    
+    # Fallback to system Python
+    return str(Path(sys.executable).resolve())
+
+
 def _build_server_choice(option: ServerOption) -> ServerChoice:
     display = option.default_display_name
     slug = _slugify(option.identifier) or option.identifier.lower()
-    command = str(Path(sys.executable).resolve())
+    command = _get_python_executable()
     script_path = option.script_path.resolve()
     return ServerChoice(
         display_name=display,
