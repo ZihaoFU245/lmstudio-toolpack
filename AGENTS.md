@@ -1,111 +1,94 @@
-Add a config for cursor in `main.py`:
+# TASK1:
+> Support HTTP transport in `main.py`
+
+## Http server format:
+```json
+{
+  "mcpServers": {
+    "http example" : {
+      "url" : "https://url-to-mcp-server",
+      "headers": {}
+    }
+  }
+}
 ```
+
+## Requirements
+
+1. In the server selection stage: User can choose to configure it as http transport or stdio transport
+  Currently, there are 2 key supports, 'A' and 'Ctrl + A'. Toggle to select.
+  Use 'H' to select configuration weather stdio or http. 
+  Use 'Ctrl + H' to mark all servers use http transport
+  > Note: Http and stdio formats are different.
+2. `main.py` is for json config file generation. Does not effect by `GlobalConfig.py`
+  If in `GlobalConfig.py`, the `transport` is set to stdio and any of the server is target to generate to `http`,
+  throw a warning at the end. After line `_write_config(output_path, content)` in `main.py :: main()` function. 
+  Use purple color
+
+# Task2:
+
+> Support cursor style json configurtion generation.
+
+## Requirements:
+1. Add cursor support
+
+Cursor json configuration looks like this:
+```json
 {
   "mcp": {
     "servers": {
-      "memory": {
-        "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-memory"],
-        "env": {
-          "MEMORY_PATH": "/tmp/agent_memory"
-        }
+      "Example-stdio" : {
+        "command": "npx or path/to/python/",
+        "args": [
+          "path/to/MCP/server/.py"
+        ]
       },
-      "web-search": {
-        "command": "npx", 
-        "args": ["-y", "@modelcontextprotocol/server-brave-search"],
-        "env": {
-          "BRAVE_API_KEY": "your-api-key"
-        }
-      },
-      "company-api": {
-        "url": "https://internal-api.company.com/mcp",
+      "Example-http": {
+        "url": "https://example.com/mcp",
         "headers": {
-          "X-API-Key": "${env:INTERNAL_API_KEY}",
-          "Content-Type": "application/json"
-        }
-      },
-      "slack": {
-        "url": "https://slack-mcp-proxy.example.com/events",
-        "headers": {
-          "Authorization": "Bearer ${env:SLACK_BOT_TOKEN}"
         }
       }
     }
   }
 }
 ```
-Cursor looks like this. And in selection we support http
+# Notes:
 
-1. In tool selection (toggle state),  add a toggle to choose http or stdio. ctrl + H, to enable http for all.
-2. Add a build config for cursor
+1. Leave `"headers"` and `"env"` empty, for `http` and `stdio` respectively. 
 
-In your last edits:
+2. Toggle http should be per-tool toggle, which means stdio and http can be mixed.
 
-you made:
-```json
-"python-sandbox": {
-        "command": "D:\\MyProject\\lmstudio-toolpack\\.venv\\Scripts\\python.exe",
-        "args": [
-          "D:\\MyProject\\lmstudio-toolpack\\MCPs\\python-sandbox.py"
-        ],
-        "env": {
-          "MCP_TRANSPORT": "http"
-        }
-```
-You edit added a `"MCP_TRANSPORT": "http"`, but this is wrong.
-
-It should be:
-```json
-      "company-api": {
-        "url": "https://internal-api.company.com/mcp",
-        "headers": {
-          "X-API-Key": "${env:INTERNAL_API_KEY}",
-          "Content-Type": "application/json"
-        }
-```
-like this. For http transport.
-And for stdio transport:
-```json
-    "python-sandbox": {
-      "command": "D:\\MyProject\\lmstudio-toolpack\\.venv\\Scripts\\python.exe",
-      "args": [
-        "D:\\MyProject\\lmstudio-toolpack\\MCPs\\python-sandbox.py"
-      ],
-      "env": {}
-    },
-```
-is this.
-
-Leave `"headers"` and `"env"` empty. 
-
-Second thing:
-Toggle http should be per-tool toggle, not toggle all. And ctrl + H is not force toggle. It is toggle all of them to use http.
-
-Example: 
-"""
+3. **Example:**
 3 tools: A, B, C
 default to all stdio, they are initially: A (stdio), B (stdio), C (stdio)
 Select B and press H: A (stdio), B (http), C (stdio)
 Press ctrl + H: A (http), B (http), C (http)
 Press ctrl + H again: A (stdio), B (stdio), C (stdio)
-
+Select A and press H: A (http), B (stdio), C (stdio)
 After this, the generated json file, if a tool is http, then
 ```json
-"Tool name (A / B / C)": {
-  "url": "https://internal-api.company.com/mcp",
-  "headers": {}
+{
+  "mcpServers": {
+    "A" : {
+      "url" : "https://url-to-mcp-server",
+      "headers": {}
+    },
+    "B" : {
+      "command": "path/to/python",
+      "args": [
+        "path/to/mcp/server"
+      ],
+      "env": {}
+    },
+    "C" : {
+      "command": "path/to/python",
+      "args": [
+        "path/to/mcp/server"
+      ],
+      "env": {}
+    }
+  }
 }
 ```
-if it is stdio, then
-```json
-"Tool name (A / B / C)": {
-  "command": "D:\\MyProject\\lmstudio-toolpack\\.venv\\Scripts\\python.exe",
-  "args": [
-  "D:\\MyProject\\lmstudio-toolpack\\MCPs\\python-sandbox.py"
-  ],
-  "env": {}
-}
-```
-"""
 
-I have rolled back your last edits. try again.
+Refactor code as you like, only touch `main.py`
