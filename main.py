@@ -57,6 +57,9 @@ class _Key(Enum):
     OTHER = "other"
 
 
+_CTRL_HTTP_ALL_CODES = {"\x08", "\x7f"}
+
+
 def main() -> None:
     base_dir = Path(__file__).resolve().parent
     _enable_vt_mode()
@@ -514,7 +517,7 @@ def _read_key_windows() -> _Key:
             return _Key.SPACE
         if ch in {"h", "H"}:
             return _Key.TOGGLE_HTTP
-        if ch == "\x08":
+        if ch in _CTRL_HTTP_ALL_CODES:
             return _Key.TOGGLE_HTTP_ALL
         if ch == "\x01":
             return _Key.TOGGLE_ALL
@@ -546,7 +549,7 @@ def _read_key_posix() -> _Key:
             return _Key.SPACE
         if ch in {"h", "H"}:
             return _Key.TOGGLE_HTTP
-        if ch == "\x08":
+        if ch in _CTRL_HTTP_ALL_CODES:
             return _Key.TOGGLE_HTTP_ALL
         if ch == "\x01":
             return _Key.TOGGLE_ALL
