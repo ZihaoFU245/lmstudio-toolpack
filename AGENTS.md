@@ -1,36 +1,40 @@
-#folder:MCPs There are MCP servers in this folder.
-This main.py is for generating json configuation files
-Requirements:
-1. A CLI Tool
-2. Support different types, now only VScode and Lm-Studio.
-3. User can select which mcp server to add. In settings, user can choose to default select all or not select anything.
-4. Any configuration file for this CLI tool will be put in /data folder, already exists
-5. It is an interactive tool, do not allow `main.py --flag` use
-Appendix:
-For VScode, the json cionfig looks like:
+Add a config for cursor in `main.py`:
 ```
 {
+  "mcp": {
     "servers": {
-        "Web Search": {
-            "type": "stdio",
-            "command": "E:\\LMStudio\\mcp\\lmstudio-toolpack\\.venv\\Scripts\\python.exe",
-            "args": [
-                "E:\\LMStudio\\mcp\\lmstudio-toolpack\\WebSearch.py"
-            ]
+      "memory": {
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-memory"],
+        "env": {
+          "MEMORY_PATH": "/tmp/agent_memory"
         }
-    }
-}
-```
-And for LM-Studio is:
-```
-{
-  "mcpServers": {
-    "web-search": {
-      "command": "E:\\LMStudio\\mcp\\lmstudio-toolpack\\.venv\\Scripts\\python.exe",
-      "args": [
-        "E:\\LMStudio\\mcp\\lmstudio-toolpack\\WebSearch.py"
-      ],
+      },
+      "web-search": {
+        "command": "npx", 
+        "args": ["-y", "@modelcontextprotocol/server-brave-search"],
+        "env": {
+          "BRAVE_API_KEY": "your-api-key"
+        }
+      },
+      "company-api": {
+        "url": "https://internal-api.company.com/mcp",
+        "headers": {
+          "X-API-Key": "${env:INTERNAL_API_KEY}",
+          "Content-Type": "application/json"
+        }
+      },
+      "slack": {
+        "url": "https://slack-mcp-proxy.example.com/events",
+        "headers": {
+          "Authorization": "Bearer ${env:SLACK_BOT_TOKEN}"
+        }
+      }
     }
   }
+}
 ```
-As I stated, finish the CLI tool
+Cursor looks like this. And in selection we support http
+
+1. In tool selection (toggle state),  add a toggle to choose http or stdio. ctrl + H, to enable http for all.
+2. Add a build config for cursor
