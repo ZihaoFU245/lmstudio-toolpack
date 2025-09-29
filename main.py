@@ -70,7 +70,8 @@ def main() -> None:
 
     print("Selected servers: " + ", ".join(opt.default_display_name for opt in selected_options))
 
-    choices = [_build_server_choice(opt) for opt in selected_options]
+    python_command = _resolve_python_command(base_dir)
+    choices = [_build_server_choice(opt, python_command) for opt in selected_options]
 
     transport = GlobalConfig().transport
     if platform_key == "vscode":
@@ -192,10 +193,9 @@ def _prompt_server_selection_fallback(
             print(f"Ignored invalid entries: {', '.join(invalid)}")
 
 
-def _build_server_choice(option: ServerOption) -> ServerChoice:
+def _build_server_choice(option: ServerOption, command: str) -> ServerChoice:
     display = option.default_display_name
     slug = _slugify(option.identifier) or option.identifier.lower()
-    command = str(Path(sys.executable).resolve())
     script_path = option.script_path.resolve()
     return ServerChoice(
         display_name=display,
@@ -203,6 +203,30 @@ def _build_server_choice(option: ServerOption) -> ServerChoice:
         command=command,
         script_path=script_path,
     )
+
+
+def _resolve_python_command(base_dir: Path) -> str:
+    candidates: List[Path] = []
+    venv_env = os.environ.get("VIRTUAL_ENV")
+    if venv_env:
+        candidates.append(Path(venv_env))
+    candidates.append(base_dir / ".venv")
+
+    checked: set[Path] = set()
+    for root in candidates:
+        if not root:
+            continue
+        root = root.resolve()
+        if root in checked or not root.exists():
+            continue
+        checked.add(root)
+        bin_dir = root / ("Scripts" if os.name == "nt" else "bin")
+        for name in ("python.exe", "python3", "python"):
+            candidate = bin_dir / name
+            if candidate.exists() and os.access(candidate, os.X_OK):
+                return str(candidate)
+
+    return str(Path(sys.executable).resolve())
 
 
 def _prompt_output_path(data_dir: Path, suggested: str) -> Path:
