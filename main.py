@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence
+from urllib.parse import urlparse, urlunparse
 
 from GlobalConfig import GlobalConfig
 
@@ -245,27 +246,94 @@ def _prompt_server_selection_fallback(
 
 
 def _ensure_http_urls(selections: List[ServerSelection], interactive: bool) -> None:
+    default_url = "http://localhost:8000/mcp"
     for selection in selections:
         if selection.transport != "http":
             continue
+        suggestion = default_url
+
         if selection.http_url:
+            normalized, warnings = _normalize_http_url(selection.http_url)
+            selection.http_url = normalized
+            if interactive and warnings:
+                for message in warnings:
+                    print(_color(message, fg="yellow"))
             continue
-        suggestion = f"https://example.com/{_slugify(selection.option.identifier) or selection.option.identifier}"
+
         if not interactive:
-            selection.http_url = suggestion
+            selection.http_url, _ = _normalize_http_url(suggestion)
             continue
+
         while True:
-            url = (
+            raw = (
                 input(
                     f"Enter URL for {selection.option.default_display_name} [{suggestion}]: "
                 )
                 .strip()
                 or suggestion
             )
-            if url:
-                selection.http_url = url
-                break
-            print("URL cannot be empty for HTTP transport.")
+            normalized, warnings = _normalize_http_url(raw)
+            if not normalized:
+                print("URL cannot be empty for HTTP transport.")
+                continue
+            if warnings:
+                for message in warnings:
+                    print(_color(message, fg="yellow"))
+            selection.http_url = normalized
+            break
+
+
+
+def _normalize_http_url(raw: str) -> tuple[str, list[str]]:
+    warnings: list[str] = []
+    candidate = raw.strip()
+    if not candidate:
+        return "", warnings
+
+    if '://' not in candidate:
+        candidate = f"http://{candidate}"
+        warnings.append('No scheme provided; defaulting to http://.')
+
+    parsed = urlparse(candidate)
+    scheme = parsed.scheme.lower() or 'http'
+    if scheme not in {'http', 'https'}:
+        warnings.append(f"Unsupported URL scheme '{parsed.scheme}'. Using http:// instead.")
+        scheme = 'http'
+
+    hostname = parsed.hostname or ''
+    port = parsed.port
+    path = parsed.path or ''
+
+    local_hosts = {'', '0.0.0.0', '::', '::1'}
+    if hostname in local_hosts:
+        replacement = '127.0.0.1'
+        warnings.append(f"Host '{hostname or raw}' is not reachable from clients; using '{replacement}'.")
+        hostname = replacement
+
+    if port is None and path:
+        stripped = path.lstrip('/')
+        first_segment, _, remainder = stripped.partition('/')
+        if first_segment.isdigit():
+            port = int(first_segment)
+            path = '/' + remainder if remainder else ''
+            warnings.append(f"Interpreting '/{first_segment}' as port {first_segment}.")
+
+    if not path:
+        path = '/mcp'
+
+    if scheme == 'https' and hostname in {'127.0.0.1', 'localhost'}:
+        warnings.append("Local endpoints do not support HTTPS; switching to http://.")
+        scheme = 'http'
+
+    netloc = hostname if hostname else parsed.netloc
+    if port:
+        netloc = f"{hostname}:{port}" if hostname else f":{port}"
+
+    rebuilt = urlunparse((scheme, netloc, path, '', '', ''))
+    return rebuilt, warnings
+
+
+
 
 
 def _build_server_choice(selection: ServerSelection, command: str) -> ServerChoice:
@@ -431,7 +499,7 @@ def _interactive_multi_select(
             _color(title, fg="cyan", bold=True),
             "",
             _color(
-                "Use arrow keys to move, Space or A to toggle selection, H to toggle transport, Enter to confirm, Ctrl+A to toggle all selections, Ctrl+H to toggle all transports, Esc to cancel.",
+                "Use arrow keys to move, Space or A to toggle selection, H to toggle transport, Enter to confirm, Ctrl+A to toggle all selections, Ctrl+H to toggle all transports between stdio and http, Esc to cancel.",
                 fg="yellow",
             ),
             "",

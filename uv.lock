@@ -557,6 +557,7 @@ dependencies = [
     { name = "bs4" },
     { name = "fastmcp" },
     { name = "numpy" },
+    { name = "starlette" },
     { name = "sympy" },
     { name = "yarl" },
 ]
@@ -567,6 +568,7 @@ requires-dist = [
     { name = "bs4", specifier = ">=0.0.2" },
     { name = "fastmcp", specifier = ">=2.12.3" },
     { name = "numpy", specifier = ">=2.3.3" },
+    { name = "starlette", specifier = ">=0.48.0" },
     { name = "sympy", specifier = ">=1.14.0" },
     { name = "yarl", specifier = ">=1.20.1" },
 ]

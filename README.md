@@ -19,8 +19,8 @@ Make LocalLLMs more powerful yet simplier.
 - [Longterm-Memory](/MCPs/Memory.py): For Agents to memories things for longterm use.
 
 ## Notes
-It is default using **stdio**
-You can set it to http in `GlobalConfig`
+1. It is default using **stdio**, You can set it to http in `GlobalConfig`
+2. In `python-sandbox.py`, `exec()` function is used to allow agent execute python scripts, keep an eye on Agents.
 
 ## Requirements
 - Python >= 3.13
