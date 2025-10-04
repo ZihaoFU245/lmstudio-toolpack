@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/zihaofu245-lmstudio-toolpack-badge.png)](https://mseep.ai/app/zihaofu245-lmstudio-toolpack)
+
 # Local MCP Tools Collection
 
 > A small collection of Model Context Protocol (MCP) tools, build for local LLMs. One venv, many options.
