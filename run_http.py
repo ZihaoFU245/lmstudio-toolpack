@@ -34,6 +34,7 @@ import sys
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from pathlib import Path
+from types import MethodType
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from GlobalConfig import GlobalConfig
@@ -376,6 +377,29 @@ mcp = FastMCP(
 )
 
 
+def _wrap_tool_manager_list_tools() -> None:
+    manager = getattr(mcp, "_tool_manager", None)
+    if manager is None:
+        return
+    if getattr(manager, "_lmstudio_wrapped", False):
+        return
+
+    original_func = manager.list_tools.__func__  # type: ignore[attr-defined]
+
+    async def list_tools_with_init(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        await ensure_initialized()
+        result = original_func(self, *args, **kwargs)
+        if asyncio.iscoroutine(result):
+            return await result
+        return result
+
+    manager.list_tools = MethodType(list_tools_with_init, manager)
+    setattr(manager, "_lmstudio_wrapped", True)
+
+
+_wrap_tool_manager_list_tools()
+
+
 
 # --- Generic fallback: invoke(server, tool, args) ---
 @mcp.tool()
@@ -541,14 +565,13 @@ app.add_middleware(
 @app.on_event("startup")
 async def on_startup():
     logging.basicConfig(level=logging.INFO)
-    await setup_all()
-    await register_proxies()
+    await ensure_initialized()
     LOGGER.info("Unified MCP ready. Connect clients to /mcp.")
 
 
 @app.on_event("shutdown")
 async def on_shutdown():
-    global UPSTREAM_EXIT_STACK
+    global UPSTREAM_EXIT_STACK, _INITIALIZED, _INIT_LOCK
     if UPSTREAM_EXIT_STACK is not None:
         try:
             await UPSTREAM_EXIT_STACK.aclose()
@@ -558,6 +581,8 @@ async def on_shutdown():
         u.session = None
         u.tools = None
         u.get_session_id = None
+    _INITIALIZED = False
+    _INIT_LOCK = None
 
 
 if __name__ == "__main__":

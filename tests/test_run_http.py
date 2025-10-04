@@ -1,5 +1,6 @@
 import asyncio
 from pathlib import Path
+import importlib
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -12,6 +13,31 @@ def list_local_mcp_scripts():
     base = Path(__file__).resolve().parent.parent
     mcp_dir = base / "MCPs"
     return sorted([p for p in mcp_dir.glob("*.py")])
+
+
+@pytest.mark.asyncio
+async def test_list_tools_exposes_upstream_tools_without_manual_init():
+    """FastMCP tool inventory should initialize upstream proxies lazily."""
+
+    sys.modules.pop("run_http", None)
+    run_http_mod = importlib.import_module("run_http")
+
+    try:
+        tools = run_http_mod.mcp._tool_manager.list_tools()
+        if asyncio.iscoroutine(tools):
+            tools = await tools
+        tool_names = {tool.name for tool in tools}
+
+        expected_servers = {p.stem.lower().replace("_", "-") for p in list_local_mcp_scripts()}
+        missing = {
+            server
+            for server in expected_servers
+            if not any(name.startswith(f"{server}.") for name in tool_names)
+        }
+
+        assert not missing, f"Missing proxied tools for servers: {sorted(missing)}"
+    finally:
+        await run_http_mod.on_shutdown()
 
 
 @pytest_asyncio.fixture(scope="module")
