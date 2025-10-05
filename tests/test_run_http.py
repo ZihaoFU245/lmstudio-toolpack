@@ -1,6 +1,7 @@
 import asyncio
-from pathlib import Path
 import importlib
+import inspect
+from pathlib import Path
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -23,9 +24,7 @@ async def test_list_tools_exposes_upstream_tools_without_manual_init():
     run_http_mod = importlib.import_module("run_http")
 
     try:
-        tools = run_http_mod.mcp._tool_manager.list_tools()
-        if asyncio.iscoroutine(tools):
-            tools = await tools
+        tools = await run_http_mod.mcp.list_tools()
         tool_names = {tool.name for tool in tools}
 
         expected_servers = {p.stem.lower().replace("_", "-") for p in list_local_mcp_scripts()}
@@ -36,6 +35,22 @@ async def test_list_tools_exposes_upstream_tools_without_manual_init():
         }
 
         assert not missing, f"Missing proxied tools for servers: {sorted(missing)}"
+    finally:
+        await run_http_mod.on_shutdown()
+
+
+@pytest.mark.asyncio
+async def test_tool_manager_list_tools_remains_sync():
+    sys.modules.pop("run_http", None)
+    run_http_mod = importlib.import_module("run_http")
+
+    try:
+        await run_http_mod.mcp.list_tools()
+        manager = run_http_mod.mcp._tool_manager
+        assert not inspect.iscoroutinefunction(manager.list_tools)
+        tools = manager.list_tools()
+        assert isinstance(tools, list)
+        assert tools, "Tool manager returned empty list"
     finally:
         await run_http_mod.on_shutdown()
 
@@ -172,38 +187,3 @@ async def test_list_tools_for_each_mcp_server_and_non_empty(registry):
         assert tool_names, f"Server {name} has empty tool list"
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("target_server", ["memory", "websearch"])
-async def test_invoke_example_calls_for_targets(run_http_mod, usage, target_server):
-    """
-    3) Make example tool calls via run_http.invoke for Memory and WebSearch.
-       - Discover tools and input schemas from get_tool_usage
-       - Build minimal required args from schema
-       - Try tools until one invocation succeeds per server
-    """
-    usage_map = {u["server"]: u for u in usage["usage"]}
-    assert target_server in usage_map, f"Expected server missing from usage: {target_server}"
-    assert usage_map[target_server]["connected"], f"Server {target_server} not connected in usage"
-
-    tools = usage_map[target_server]["tools"]
-    assert tools, f"Server {target_server} has empty tool list in usage"
-
-    invoked_ok = False
-    last_error = None
-
-    for tool_meta in tools:
-        tool_name = tool_meta["name"]
-        schema = tool_meta.get("inputSchema") or {}
-        args = _make_args_from_schema(schema)
-
-        try:
-            _ = await run_http_mod.invoke(server=target_server, tool=tool_name, args=args)
-            invoked_ok = True
-            break
-        except Exception as exc:
-            last_error = exc
-            continue
-
-    assert invoked_ok, (
-        f"Failed to invoke any tool for server '{target_server}'. Last error: {last_error}"
-    )

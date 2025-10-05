@@ -375,29 +375,21 @@ mcp = FastMCP(
     ),
     auth=AUTH_PROVIDER,
 )
-
-
-def _wrap_tool_manager_list_tools() -> None:
-    manager = getattr(mcp, "_tool_manager", None)
-    if manager is None:
-        return
-    if getattr(manager, "_lmstudio_wrapped", False):
+def _wrap_fastmcp_list_tools() -> None:
+    if getattr(mcp, "_lmstudio_list_tools_wrapped", False):
         return
 
-    original_func = manager.list_tools.__func__  # type: ignore[attr-defined]
+    original_method = mcp.list_tools
 
     async def list_tools_with_init(self, *args, **kwargs):  # type: ignore[no-untyped-def]
         await ensure_initialized()
-        result = original_func(self, *args, **kwargs)
-        if asyncio.iscoroutine(result):
-            return await result
-        return result
+        return await original_method(*args, **kwargs)
 
-    manager.list_tools = MethodType(list_tools_with_init, manager)
-    setattr(manager, "_lmstudio_wrapped", True)
+    mcp.list_tools = MethodType(list_tools_with_init, mcp)
+    setattr(mcp, "_lmstudio_list_tools_wrapped", True)
 
 
-_wrap_tool_manager_list_tools()
+_wrap_fastmcp_list_tools()
 
 
 
@@ -574,7 +566,11 @@ async def on_shutdown():
     global UPSTREAM_EXIT_STACK, _INITIALIZED, _INIT_LOCK
     if UPSTREAM_EXIT_STACK is not None:
         try:
-            await UPSTREAM_EXIT_STACK.aclose()
+            await asyncio.wait_for(UPSTREAM_EXIT_STACK.aclose(), timeout=5)
+        except asyncio.TimeoutError:
+            LOGGER.warning("Timed out while closing upstream connections; continuing shutdown anyway.")
+        except Exception:
+            LOGGER.exception("Error while closing upstream connections.")
         finally:
             UPSTREAM_EXIT_STACK = None
     for u in UPSTREAMS:
