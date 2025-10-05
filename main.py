@@ -10,7 +10,8 @@ import sys
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Iterable, List, Sequence
+from typing import Dict, Iterable, List, Optional, Sequence
+from urllib.parse import urlparse, urlunparse
 
 from GlobalConfig import GlobalConfig
 
@@ -29,11 +30,20 @@ class ServerOption:
 
 
 @dataclass
+class ServerSelection:
+    option: ServerOption
+    transport: str = "stdio"
+    http_url: Optional[str] = None
+
+
+@dataclass
 class ServerChoice:
     display_name: str
     slug: str
-    command: str
-    script_path: Path
+    transport: str
+    command: Optional[str]
+    script_path: Optional[Path]
+    http_url: Optional[str] = None
 
 
 class _Key(Enum):
@@ -42,8 +52,13 @@ class _Key(Enum):
     ENTER = "enter"
     SPACE = "space"
     TOGGLE_ALL = "toggle_all"
+    TOGGLE_HTTP = "toggle_http"
+    TOGGLE_HTTP_ALL = "toggle_http_all"
     ESC = "esc"
     OTHER = "other"
+
+
+_CTRL_HTTP_ALL_CODES = {"\x08", "\x7f"}
 
 
 def main() -> None:
@@ -63,26 +78,44 @@ def main() -> None:
 
     platform_key = _prompt_platform(interactive)
     default_mode = _prompt_default_selection(interactive)
-    selected_options = _prompt_server_selection(options, default_mode, interactive)
-    if not selected_options:
+    selections = _prompt_server_selection(options, default_mode, interactive)
+    if not selections:
         print("No servers selected. Nothing to do.")
         return
 
-    print("Selected servers: " + ", ".join(opt.default_display_name for opt in selected_options))
+    summary_names = []
+    for sel in selections:
+        name = sel.option.default_display_name
+        if sel.transport == "http":
+            name = f"{name} (http)"
+        summary_names.append(name)
+    print("Selected servers: " + ", ".join(summary_names))
 
     python_command = _resolve_python_command(base_dir)
-    choices = [_build_server_choice(opt, python_command) for opt in selected_options]
+    _ensure_http_urls(selections, interactive)
 
-    transport = GlobalConfig().transport
+    choices = [_build_server_choice(sel, python_command) for sel in selections]
+
+    global_transport = GlobalConfig().transport
     if platform_key == "vscode":
-        content = _build_vscode_config(choices, transport)
+        content = _build_vscode_config(choices)
         suggested_name = "vscode_mcp.json"
+    elif platform_key == "cursor":
+        content = _build_cursor_config(choices)
+        suggested_name = "cursor_mcp.json"
     else:
         content = _build_lmstudio_config(choices)
         suggested_name = "lmstudio_mcp.json"
 
     output_path = _prompt_output_path(data_dir, suggested_name)
     _write_config(output_path, content)
+    if global_transport == "stdio" and any(choice.transport == "http" for choice in choices):
+        warning = _color(
+            "Warning: Global transport is set to stdio but HTTP servers were generated.",
+            fg="magenta",
+            bold=True,
+        )
+        print(warning)
     print(f"Saved configuration to {output_path}")
 
 
@@ -97,7 +130,7 @@ def _discover_servers(folder: Path) -> List[ServerOption]:
 
 
 def _prompt_platform(interactive: bool) -> str:
-    options = [("vscode", "VS Code"), ("lmstudio", "LM Studio")]
+    options = [("vscode", "VS Code"), ("lmstudio", "LM Studio"), ("cursor", "Cursor")]
     if interactive:
         index = _interactive_single_select(
             title="Target Platform",
@@ -105,18 +138,19 @@ def _prompt_platform(interactive: bool) -> str:
         )
         return options[index][0]
 
-    mapping = {"1": "vscode", "2": "lmstudio"}
+    mapping = {"1": "vscode", "2": "lmstudio", "3": "cursor"}
     prompt = (
         "Select target platform:\n"
         "  1) VS Code\n"
         "  2) LM Studio\n"
-        "Enter choice [1/2]: "
+        "  3) Cursor\n"
+        "Enter choice [1/3]: "
     )
     while True:
         choice = input(prompt).strip()
         if choice in mapping:
             return mapping[choice]
-        print("Please enter 1 or 2.")
+        print("Please enter 1, 2, or 3.")
 
 
 def _prompt_default_selection(interactive: bool) -> str:
@@ -145,24 +179,21 @@ def _prompt_default_selection(interactive: bool) -> str:
 
 def _prompt_server_selection(
     options: Iterable[ServerOption], default_mode: str, interactive: bool
-) -> List[ServerOption]:
+) -> List[ServerSelection]:
     options = list(options)
     if interactive:
-        labels = [opt.default_display_name for opt in options]
         initial = set(range(len(options))) if default_mode == "all" else set()
-        selected_indices = _interactive_multi_select(
+        return _interactive_multi_select(
             title="Select MCP Servers",
-            options=labels,
+            options=options,
             initial_selected=initial,
         )
-        return [options[i] for i in selected_indices]
 
     return _prompt_server_selection_fallback(options, default_mode)
 
-
 def _prompt_server_selection_fallback(
     options: Sequence[ServerOption], default_mode: str
-) -> List[ServerOption]:
+) -> List[ServerSelection]:
     indices = list(range(len(options)))
     selected = set(indices if default_mode == "all" else [])
     while True:
@@ -174,7 +205,7 @@ def _prompt_server_selection_fallback(
             "Enter numbers to toggle selection (comma separated), or press Enter to continue: "
         ).strip()
         if not raw:
-            return [opt for idx, opt in enumerate(options) if idx in selected]
+            break
         tokens = _split_numbers(raw)
         invalid = []
         for token in tokens:
@@ -192,16 +223,141 @@ def _prompt_server_selection_fallback(
         if invalid:
             print(f"Ignored invalid entries: {', '.join(invalid)}")
 
+    selections: List[ServerSelection] = []
+    for idx in sorted(selected):
+        opt = options[idx]
+        while True:
+            answer = (
+                input(
+                    f"Use HTTP transport for {opt.default_display_name}? [y/N]: "
+                )
+                .strip()
+                .lower()
+            )
+            if answer in {"", "n", "no"}:
+                transport = "stdio"
+                break
+            if answer in {"y", "yes"}:
+                transport = "http"
+                break
+            print("Please enter y or n.")
+        selections.append(ServerSelection(option=opt, transport=transport))
+    return selections
 
-def _build_server_choice(option: ServerOption, command: str) -> ServerChoice:
+
+def _ensure_http_urls(selections: List[ServerSelection], interactive: bool) -> None:
+    default_url = "http://localhost:8000/mcp"
+    for selection in selections:
+        if selection.transport != "http":
+            continue
+        suggestion = default_url
+
+        if selection.http_url:
+            normalized, warnings = _normalize_http_url(selection.http_url)
+            selection.http_url = normalized
+            if interactive and warnings:
+                for message in warnings:
+                    print(_color(message, fg="yellow"))
+            continue
+
+        if not interactive:
+            selection.http_url, _ = _normalize_http_url(suggestion)
+            continue
+
+        while True:
+            raw = (
+                input(
+                    f"Enter URL for {selection.option.default_display_name} [{suggestion}]: "
+                )
+                .strip()
+                or suggestion
+            )
+            normalized, warnings = _normalize_http_url(raw)
+            if not normalized:
+                print("URL cannot be empty for HTTP transport.")
+                continue
+            if warnings:
+                for message in warnings:
+                    print(_color(message, fg="yellow"))
+            selection.http_url = normalized
+            break
+
+
+
+def _normalize_http_url(raw: str) -> tuple[str, list[str]]:
+    warnings: list[str] = []
+    candidate = raw.strip()
+    if not candidate:
+        return "", warnings
+
+    if '://' not in candidate:
+        candidate = f"http://{candidate}"
+        warnings.append('No scheme provided; defaulting to http://.')
+
+    parsed = urlparse(candidate)
+    scheme = parsed.scheme.lower() or 'http'
+    if scheme not in {'http', 'https'}:
+        warnings.append(f"Unsupported URL scheme '{parsed.scheme}'. Using http:// instead.")
+        scheme = 'http'
+
+    hostname = parsed.hostname or ''
+    port = parsed.port
+    path = parsed.path or ''
+
+    local_hosts = {'', '0.0.0.0', '::', '::1'}
+    if hostname in local_hosts:
+        replacement = '127.0.0.1'
+        warnings.append(f"Host '{hostname or raw}' is not reachable from clients; using '{replacement}'.")
+        hostname = replacement
+
+    if port is None and path:
+        stripped = path.lstrip('/')
+        first_segment, _, remainder = stripped.partition('/')
+        if first_segment.isdigit():
+            port = int(first_segment)
+            path = '/' + remainder if remainder else ''
+            warnings.append(f"Interpreting '/{first_segment}' as port {first_segment}.")
+
+    if not path:
+        path = '/mcp'
+
+    if scheme == 'https' and hostname in {'127.0.0.1', 'localhost'}:
+        warnings.append("Local endpoints do not support HTTPS; switching to http://.")
+        scheme = 'http'
+
+    netloc = hostname if hostname else parsed.netloc
+    if port:
+        netloc = f"{hostname}:{port}" if hostname else f":{port}"
+
+    rebuilt = urlunparse((scheme, netloc, path, '', '', ''))
+    return rebuilt, warnings
+
+
+
+
+
+def _build_server_choice(selection: ServerSelection, command: str) -> ServerChoice:
+    option = selection.option
     display = option.default_display_name
     slug = _slugify(option.identifier) or option.identifier.lower()
+    if selection.transport == "http":
+        return ServerChoice(
+            display_name=display,
+            slug=slug,
+            transport="http",
+            command=None,
+            script_path=None,
+            http_url=selection.http_url or "",
+        )
+
     script_path = option.script_path.resolve()
     return ServerChoice(
         display_name=display,
         slug=slug,
+        transport="stdio",
         command=command,
         script_path=script_path,
+        http_url=None,
     )
 
 
@@ -242,27 +398,58 @@ def _prompt_output_path(data_dir: Path, suggested: str) -> Path:
         return output_path
 
 
-def _build_vscode_config(choices: List[ServerChoice], transport: str) -> dict:
+def _build_vscode_config(choices: List[ServerChoice]) -> dict:
     servers = {}
     for choice in choices:
-        servers[choice.display_name] = {
-            "type": transport,
-            "command": choice.command,
-            "args": [str(choice.script_path)],
-            "env" : {}
-        }
+        if choice.transport == "http":
+            servers[choice.display_name] = {
+                "type": "http",
+                "url": choice.http_url or "",
+                "headers": {},
+            }
+        else:
+            servers[choice.display_name] = {
+                "type": "stdio",
+                "command": choice.command,
+                "args": [str(choice.script_path)],
+                "env": {},
+            }
     return {"servers": servers}
 
 
 def _build_lmstudio_config(choices: List[ServerChoice]) -> dict:
     servers = {}
     for choice in choices:
-        servers[choice.slug] = {
-            "command": choice.command,
-            "args": [str(choice.script_path)],
-            "env" : {}
-        }
+        if choice.transport == "http":
+            servers[choice.slug] = {
+                "url": choice.http_url or "",
+                "headers": {},
+            }
+        else:
+            servers[choice.slug] = {
+                "command": choice.command,
+                "args": [str(choice.script_path)],
+                "env": {},
+            }
     return {"mcpServers": servers}
+
+
+def _build_cursor_config(choices: List[ServerChoice]) -> dict:
+    servers = {}
+    for choice in choices:
+        key = choice.slug
+        if choice.transport == "http":
+            servers[key] = {
+                "url": choice.http_url or "",
+                "headers": {},
+            }
+        else:
+            servers[key] = {
+                "command": choice.command,
+                "args": [str(choice.script_path)],
+                "env": {},
+            }
+    return {"mcp": {"servers": servers}}
 
 
 def _write_config(path: Path, content: dict) -> None:
@@ -300,24 +487,27 @@ def _interactive_single_select(title: str, options: Sequence[str]) -> int:
 
 
 def _interactive_multi_select(
-    title: str, options: Sequence[str], initial_selected: Iterable[int]
-) -> List[int]:
+    title: str, options: Sequence[ServerOption], initial_selected: Iterable[int]
+) -> List[ServerSelection]:
     if not options:
         return []
     index = 0
     selected = set(initial_selected)
+    transports: Dict[int, str] = {idx: "stdio" for idx in range(len(options))}
     while True:
         lines = [
             _color(title, fg="cyan", bold=True),
             "",
             _color(
-                "Use arrow keys to move, Space or A to toggle, Enter to confirm, Ctrl+A to toggle all, Esc to cancel.",
+                "Use arrow keys to move, Space or A to toggle selection, H to toggle transport, Enter to confirm, Ctrl+A to toggle all selections, Ctrl+H to toggle all transports between stdio and http, Esc to cancel.",
                 fg="yellow",
             ),
             "",
         ]
-        for idx, label in enumerate(options):
+        for idx, option in enumerate(options):
             marked = idx in selected
+            transport_label = "http" if transports[idx] == "http" else "stdio"
+            label = f"{option.default_display_name} ({transport_label})"
             lines.append(_format_option(label, idx == index, marked=marked))
         lines.append("")
         lines.append(
@@ -340,9 +530,19 @@ def _interactive_multi_select(
                 selected.clear()
             else:
                 selected = set(range(len(options)))
+        elif key == _Key.TOGGLE_HTTP:
+            transports[index] = "http" if transports[index] == "stdio" else "stdio"
+        elif key == _Key.TOGGLE_HTTP_ALL:
+            all_http = all(value == "http" for value in transports.values())
+            new_value = "stdio" if all_http else "http"
+            for key_idx in transports:
+                transports[key_idx] = new_value
         elif key == _Key.ENTER:
             _clear_screen()
-            return sorted(selected)
+            return [
+                ServerSelection(option=options[i], transport=transports[i])
+                for i in sorted(selected)
+            ]
         elif key == _Key.ESC:
             _clear_screen()
             return []
@@ -383,6 +583,10 @@ def _read_key_windows() -> _Key:
             return _Key.ENTER
         if ch in {" ", "a", "A"}:
             return _Key.SPACE
+        if ch in {"h", "H"}:
+            return _Key.TOGGLE_HTTP
+        if ch in _CTRL_HTTP_ALL_CODES:
+            return _Key.TOGGLE_HTTP_ALL
         if ch == "\x01":
             return _Key.TOGGLE_ALL
         if ch in {"\x00", "\xe0"}:
@@ -411,6 +615,10 @@ def _read_key_posix() -> _Key:
             return _Key.ENTER
         if ch in {" ", "a", "A"}:
             return _Key.SPACE
+        if ch in {"h", "H"}:
+            return _Key.TOGGLE_HTTP
+        if ch in _CTRL_HTTP_ALL_CODES:
+            return _Key.TOGGLE_HTTP_ALL
         if ch == "\x01":
             return _Key.TOGGLE_ALL
         if ch == "\x03":
