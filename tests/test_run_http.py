@@ -1,4 +1,7 @@
 import asyncio
+import importlib
+import inspect
+import re
 from pathlib import Path
 
 import sys
@@ -14,11 +17,70 @@ def list_local_mcp_scripts():
     return sorted([p for p in mcp_dir.glob("*.py")])
 
 
+def _find_upstream(run_http_mod, name: str):
+    for upstream in run_http_mod.UPSTREAMS:
+        if upstream.name == name:
+            return upstream
+    raise AssertionError(f"Upstream {name} not found")
+
+
+def _find_tool_meta(upstream, raw_name: str):
+    tools = upstream.tools or {}
+    for exposed_name, meta in tools.items():
+        if meta.get("raw_name") == raw_name:
+            return exposed_name, meta
+    raise AssertionError(f"Tool {raw_name} not found for upstream {upstream.name}")
+
+
+@pytest.mark.asyncio
+async def test_list_tools_exposes_upstream_tools_without_manual_init():
+    """FastMCP tool inventory should initialize upstream proxies lazily."""
+
+    sys.modules.pop("run_http", None)
+    run_http_mod = importlib.import_module("run_http")
+
+    try:
+        tools = await run_http_mod.mcp.list_tools()
+        tool_names = {tool.name for tool in tools}
+
+        expected_servers = {p.stem.lower().replace("_", "-") for p in list_local_mcp_scripts()}
+        missing = {
+            server
+            for server in expected_servers
+            if not any(name.startswith(f"{server}-") for name in tool_names)
+        }
+
+        assert not missing, f"Missing proxied tools for servers: {sorted(missing)}"
+
+        assert all(re.fullmatch(r"[a-z0-9_-]+", name) for name in tool_names), "Tool names contain invalid characters"
+    finally:
+        await run_http_mod.on_shutdown()
+
+
+@pytest.mark.asyncio
+async def test_tool_manager_list_tools_remains_sync():
+    sys.modules.pop("run_http", None)
+    run_http_mod = importlib.import_module("run_http")
+
+    try:
+        await run_http_mod.mcp.list_tools()
+        manager = run_http_mod.mcp._tool_manager
+        assert not inspect.iscoroutinefunction(manager.list_tools)
+        tools = manager.list_tools()
+        assert isinstance(tools, list)
+        assert tools, "Tool manager returned empty list"
+    finally:
+        await run_http_mod.on_shutdown()
+
+
 @pytest_asyncio.fixture(scope="module")
 async def run_http_mod():
     import run_http
     await run_http.ensure_initialized()
-    return run_http
+    try:
+        yield run_http
+    finally:
+        await run_http.on_shutdown()
 
 
 @pytest.mark.asyncio
@@ -147,37 +209,49 @@ async def test_list_tools_for_each_mcp_server_and_non_empty(registry):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("target_server", ["memory", "websearch"])
-async def test_invoke_example_calls_for_targets(run_http_mod, usage, target_server):
-    """
-    3) Make example tool calls via run_http.invoke for Memory and WebSearch.
-       - Discover tools and input schemas from get_tool_usage
-       - Build minimal required args from schema
-       - Try tools until one invocation succeeds per server
-    """
-    usage_map = {u["server"]: u for u in usage["usage"]}
-    assert target_server in usage_map, f"Expected server missing from usage: {target_server}"
-    assert usage_map[target_server]["connected"], f"Server {target_server} not connected in usage"
+async def test_invoke_accepts_multiple_aliases(run_http_mod):
+    memory = _find_upstream(run_http_mod, "memory")
+    exposed_name, meta = _find_tool_meta(memory, "remember")
+    args = {"title": "alias-test", "content": "content"}
 
-    tools = usage_map[target_server]["tools"]
-    assert tools, f"Server {target_server} has empty tool list in usage"
+    alias_keys = set(meta.get("alias_keys") or [])
+    expected_keys = {
+        "remember",
+        f"{memory.name}-remember",
+        f"{memory.name}.remember".replace(".", "-"),
+    }
+    assert expected_keys <= alias_keys, f"Alias keys missing expected forms: {expected_keys - alias_keys}"
 
-    invoked_ok = False
-    last_error = None
+    variants = [
+        meta.get("raw_name"),
+        meta.get("short_name"),
+        exposed_name,
+        f"{memory.name}.{meta.get('raw_name')}",
+        f"{memory.name}-{meta.get('raw_name')}",
+        f"{memory.name}_{meta.get('raw_name')}",
+        f"{memory.name}.{meta.get('raw_name').upper()}",
+    ]
 
-    for tool_meta in tools:
-        tool_name = tool_meta["name"]
-        schema = tool_meta.get("inputSchema") or {}
-        args = _make_args_from_schema(schema)
+    structured_payloads = []
+    for variant in dict.fromkeys(filter(None, variants)):
+        result = await run_http_mod.invoke(memory.name, variant, args)
+        assert isinstance(result, dict), f"Invoke returned non-serializable payload for {variant}: {type(result)}"
+        structured = result.get("structuredContent")
+        assert isinstance(structured, dict), f"Structured content missing for {variant}"
+        structured_payloads.append(structured)
 
-        try:
-            _ = await run_http_mod.invoke(server=target_server, tool=tool_name, args=args)
-            invoked_ok = True
-            break
-        except Exception as exc:
-            last_error = exc
-            continue
+    assert structured_payloads, "No invoke variants were exercised"
+    first = structured_payloads[0]
+    assert all(payload == first for payload in structured_payloads), "Invoke variants returned mismatched payloads"
 
-    assert invoked_ok, (
-        f"Failed to invoke any tool for server '{target_server}'. Last error: {last_error}"
-    )
+
+@pytest.mark.asyncio
+async def test_proxy_tools_return_serializable_payload(run_http_mod):
+    memory = _find_upstream(run_http_mod, "memory")
+    exposed_name, _ = _find_tool_meta(memory, "retrieve")
+    manager = run_http_mod.mcp._tool_manager
+    result = await manager.call_tool(exposed_name, {"top_k": 1})
+    assert isinstance(result, dict), f"Proxy returned non-serializable payload: {type(result)}"
+    assert "structuredContent" in result, "Structured content missing from proxy response"
+
+

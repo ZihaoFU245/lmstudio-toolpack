@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import inspect
 import json
 import logging
 import os
@@ -34,6 +35,7 @@ import sys
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from pathlib import Path
+from types import MethodType
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from GlobalConfig import GlobalConfig
@@ -101,6 +103,20 @@ def _slugify(value: str) -> str:
     cleaned = re.sub(r"-+", "-", cleaned)
     cleaned = cleaned.strip("-")
     return cleaned.lower() or value.lower()
+
+
+def _sanitize_tool_identifier(value: str) -> str:
+    value = value.strip().lower()
+    sanitized = re.sub(r"[^a-z0-9_-]+", "-", value)
+    sanitized = re.sub(r"-+", "-", sanitized)
+    sanitized = sanitized.strip("-")
+    return sanitized or "tool"
+
+
+def _normalize_alias_key(value: str | None) -> str:
+    if not value:
+        return ""
+    return _sanitize_tool_identifier(value.replace("_", "-").replace(".", "-"))
 
 
 def _normalize_skip(skip: Sequence[str]) -> set[str]:
@@ -280,16 +296,54 @@ async def connect_upstream(u: Upstream, stack: AsyncExitStack) -> None:
 
     listed = await session.list_tools()
     tools: Dict[str, Dict[str, Any]] = {}
+    seen_suffixes: Dict[str, int] = {}
     for tool in listed.tools:
-        tools[tool.name] = {
-            "name": tool.name,
+        raw_name = (getattr(tool, "name", "") or "").strip()
+        sanitized_raw = _sanitize_tool_identifier(raw_name) if raw_name else ""
+        short_name = sanitized_raw or "tool"
+        prefix = f"{u.name}-"
+        if short_name.startswith(prefix):
+            short_name = short_name[len(prefix) : ] or sanitized_raw or "tool"
+
+        base_short = short_name
+        exposed_name = f"{u.name}-{short_name}"
+        while exposed_name in tools:
+            counter = seen_suffixes.get(base_short, 1) + 1
+            seen_suffixes[base_short] = counter
+            short_name = f"{base_short}-{counter}"
+            exposed_name = f"{u.name}-{short_name}"
+        seen_suffixes.setdefault(base_short, 1)
+
+        alias_candidates = {
+            raw_name,
+            sanitized_raw,
+            short_name,
+            base_short,
+            exposed_name,
+            exposed_name.replace("-", "_"),
+            f"{u.name}.{raw_name}",
+            f"{u.name}.{short_name}",
+            f"{u.name}-{raw_name}",
+            f"{u.name}_{raw_name}",
+            f"{u.name}_{short_name}",
+            f"{u.name}-{short_name}",
+        }
+        alias_keys = {
+            key for key in (_normalize_alias_key(candidate) for candidate in alias_candidates)
+            if key
+        }
+        tools[exposed_name] = {
+            "name": exposed_name,
+            "short_name": short_name,
+            "raw_name": raw_name or tool.name,
             "description": getattr(tool, "description", "") or "",
             "inputSchema": getattr(tool, "inputSchema", None),
+            "alias_keys": sorted(alias_keys),
         }
     u.session = session
     u.tools = tools
     u.last_error = None
-    LOGGER.info("[upstream:%s] tools: %s", u.name, list(tools.keys()))
+    LOGGER.info("[upstream:%s] tools: %s", u.name, [meta["raw_name"] for meta in tools.values()])
 
 
 def _serialize_input_schema(schema: Any) -> Any:
@@ -318,6 +372,30 @@ def _build_args_template(schema: Any) -> dict[str, Any]:
     for name in props:
         template[name] = "<required>" if name in required else None
     return template
+
+
+def _coerce_tool_result(result: Any) -> Any:
+    if result is None:
+        return None
+    is_error = getattr(result, "isError", False)
+    if is_error:
+        detail = getattr(result, "structuredContent", None)
+        if not detail:
+            content = getattr(result, "content", None)
+            if content is not None:
+                detail = [
+                    part.model_dump() if hasattr(part, "model_dump") else part
+                    for part in content
+                ]
+        raise RuntimeError(f"Upstream tool reported error: {detail}")
+    if hasattr(result, "model_dump"):
+        try:
+            return result.model_dump()
+        except TypeError:
+            pass
+    if hasattr(result, "dict"):
+        return result.dict()
+    return result
 
 
 async def setup_all() -> List[Upstream]:
@@ -374,6 +452,21 @@ mcp = FastMCP(
     ),
     auth=AUTH_PROVIDER,
 )
+def _wrap_fastmcp_list_tools() -> None:
+    if getattr(mcp, "_lmstudio_list_tools_wrapped", False):
+        return
+
+    original_method = mcp.list_tools
+
+    async def list_tools_with_init(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        await ensure_initialized()
+        return await original_method(*args, **kwargs)
+
+    mcp.list_tools = MethodType(list_tools_with_init, mcp)
+    setattr(mcp, "_lmstudio_list_tools_wrapped", True)
+
+
+_wrap_fastmcp_list_tools()
 
 
 
@@ -397,7 +490,45 @@ async def invoke(server: str, tool: str, args: dict[str, Any]) -> Any:
         raise ValueError(f"Unknown upstream '{server}'")
     if not upstream.session:
         raise RuntimeError(f"Upstream '{server}' is not connected")
-    return await upstream.session.call_tool(tool, args or {})
+    tools = upstream.tools or {}
+    candidate = tool.strip()
+    candidate_key = _normalize_alias_key(candidate)
+    prefix_key = f"{upstream.name}-"
+    candidate_without_prefix = (
+        candidate_key[len(prefix_key) :]
+        if candidate_key.startswith(prefix_key)
+        else candidate_key
+    )
+    lookup_keys = {candidate_key, candidate_without_prefix}
+    if candidate_lower := candidate.lower():
+        lookup_keys.add(_normalize_alias_key(candidate_lower))
+
+    resolved_name: Optional[str] = None
+
+    if candidate in tools:
+        resolved_name = candidate
+    elif candidate.lower() in tools:
+        resolved_name = candidate.lower()
+    else:
+        for exposed_name, meta in tools.items():
+            alias_keys = set(meta.get("alias_keys") or [])
+            if not alias_keys:
+                alias_keys = {
+                    _normalize_alias_key(meta.get("raw_name")),
+                    _normalize_alias_key(meta.get("short_name")),
+                    _normalize_alias_key(exposed_name),
+                }
+                alias_keys.discard("")
+            if lookup_keys & alias_keys:
+                resolved_name = exposed_name
+                break
+
+    if not resolved_name:
+        raise ValueError(f"Unknown tool '{tool}' for upstream '{server}'")
+
+    meta = tools[resolved_name]
+    result = await upstream.session.call_tool(meta.get("raw_name", resolved_name), args or {})
+    return _coerce_tool_result(result)
 
 
 @mcp.tool(description="Return all tools discovered from MCP servers in the MCPs directory.")
@@ -412,6 +543,8 @@ async def get_registry() -> dict[str, Any]:
                 tools.append(
                     {
                         "name": tool_name,
+                        "rawName": meta.get("raw_name"),
+                        "shortName": meta.get("short_name"),
                         "description": meta.get("description", ""),
                         "inputSchema": _serialize_input_schema(meta.get("inputSchema")),
                     }
@@ -446,13 +579,15 @@ async def get_tool_usage() -> dict[str, Any]:
                 tools.append(
                     {
                         "name": tool_name,
+                        "rawName": meta.get("raw_name"),
+                        "shortName": meta.get("short_name"),
                         "description": meta.get("description", ""),
                         "inputSchema": serialized_schema,
                         "invoke": {
                             "tool": "invoke",
                             "arguments": {
                                 "server": upstream.name,
-                                "tool": tool_name,
+                                "tool": meta.get("short_name", meta.get("raw_name", tool_name)),
                                 "args": _build_args_template(serialized_schema),
                             },
                         },
@@ -472,16 +607,35 @@ async def get_tool_usage() -> dict[str, Any]:
 # --- Dynamic proxy tools registration ---
 # We construct small wrapper coroutines per upstream tool and register them on the fly.
 
-def _make_proxy(u: Upstream, tool_name: str) -> Callable[..., Any]:
-    fq = f"{u.name}.{tool_name}"
+def _make_proxy(u: Upstream, exposed_name: str, meta: Dict[str, Any]) -> Callable[..., Any]:
+    raw_name = meta.get("raw_name", exposed_name)
+    doc_name = meta.get("raw_name", exposed_name)
 
     async def proxy(**kwargs):  # type: ignore[no-untyped-def]
         if not u.session:
             raise RuntimeError(f"Upstream {u.name} is not connected")
-        return await u.session.call_tool(tool_name, kwargs or {})
+        result = await u.session.call_tool(raw_name, kwargs or {})
+        return _coerce_tool_result(result)
 
-    proxy.__name__ = fq.replace(".", "_")
-    proxy.__doc__ = f"Proxy for upstream tool '{tool_name}' on server '{u.name}'."
+    proxy.__name__ = re.sub(r"[^0-9a-zA-Z_]+", "_", exposed_name)
+    proxy.__doc__ = f"Proxy for upstream tool '{doc_name}' on server '{u.name}'."
+    schema = _serialize_input_schema(meta.get("inputSchema"))
+    params: list[inspect.Parameter] = []
+    if isinstance(schema, dict):
+        properties = schema.get("properties") or {}
+        required = set(schema.get("required", []) or [])
+        if isinstance(properties, dict):
+            for key in properties:
+                default = inspect._empty if key in required else None
+                params.append(
+                    inspect.Parameter(
+                        key,
+                        inspect.Parameter.KEYWORD_ONLY,
+                        default=default,
+                        annotation=Any,
+                    )
+                )
+    proxy.__signature__ = inspect.Signature(params)
     return proxy
 
 
@@ -495,9 +649,9 @@ async def register_proxies() -> None:
                 bool(u.tools),
             )
             continue
-        for tname, meta in u.tools.items():
-            proxy_fn = _make_proxy(u, tname)
-            mcp.tool(name=f"{u.name}.{tname}", description=meta.get("description") or "")(proxy_fn)
+        for exposed_name, meta in u.tools.items():
+            proxy_fn = _make_proxy(u, exposed_name, meta)
+            mcp.tool(name=exposed_name, description=meta.get("description") or "")(proxy_fn)
 
 
 # -------------------------
@@ -541,23 +695,30 @@ app.add_middleware(
 @app.on_event("startup")
 async def on_startup():
     logging.basicConfig(level=logging.INFO)
-    await setup_all()
-    await register_proxies()
+    await ensure_initialized()
     LOGGER.info("Unified MCP ready. Connect clients to /mcp.")
 
 
 @app.on_event("shutdown")
 async def on_shutdown():
-    global UPSTREAM_EXIT_STACK
+    global UPSTREAM_EXIT_STACK, _INITIALIZED, _INIT_LOCK
     if UPSTREAM_EXIT_STACK is not None:
         try:
-            await UPSTREAM_EXIT_STACK.aclose()
+            await asyncio.wait_for(UPSTREAM_EXIT_STACK.aclose(), timeout=5)
+        except asyncio.TimeoutError:
+            LOGGER.warning("Timed out while closing upstream connections; continuing shutdown anyway.")
+        except BaseExceptionGroup as exc:  # pragma: no cover - depends on runtime behaviour
+            LOGGER.error("Error group while closing upstream connections: %s", exc)
+        except Exception:
+            LOGGER.exception("Error while closing upstream connections.")
         finally:
             UPSTREAM_EXIT_STACK = None
     for u in UPSTREAMS:
         u.session = None
         u.tools = None
         u.get_session_id = None
+    _INITIALIZED = False
+    _INIT_LOCK = None
 
 
 if __name__ == "__main__":
