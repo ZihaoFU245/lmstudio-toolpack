@@ -1,6 +1,9 @@
+[![MCP Badge](https://lobehub.com/badge/mcp-full/zihaofu245-lmstudio-toolpack)](https://lobehub.com/mcp/zihaofu245-lmstudio-toolpack)
+
 [![MseeP.ai Security Assessment Badge](https://mseep.net/pr/zihaofu245-lmstudio-toolpack-badge.png)](https://mseep.ai/app/zihaofu245-lmstudio-toolpack)
 
 [![Verified on MseeP](https://mseep.ai/badge.svg)](https://mseep.ai/app/acc116e1-414b-418b-8a94-00ab266263d8)
+
 
 # Local MCP Tools Collection
 
