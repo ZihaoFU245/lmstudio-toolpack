@@ -1,6 +1,7 @@
 """
 MCP json config generating tool
 """
+
 from __future__ import annotations
 
 import json
@@ -44,6 +45,7 @@ class ServerChoice:
     command: Optional[str]
     script_path: Optional[Path]
     http_url: Optional[str] = None
+    env: Dict[str, str] | None = None
 
 
 class _Key(Enum):
@@ -93,8 +95,14 @@ def main() -> None:
 
     python_command = _resolve_python_command(base_dir)
     _ensure_http_urls(selections, interactive)
+    sandbox_log_path = _prompt_python_sandbox_log_path(
+        base_dir, selections, interactive
+    )
 
-    choices = [_build_server_choice(sel, python_command) for sel in selections]
+    choices = [
+        _build_server_choice(sel, python_command, sandbox_log_path)
+        for sel in selections
+    ]
 
     global_transport = GlobalConfig().transport
     if platform_key == "vscode":
@@ -109,7 +117,9 @@ def main() -> None:
 
     output_path = _prompt_output_path(data_dir, suggested_name)
     _write_config(output_path, content)
-    if global_transport == "stdio" and any(choice.transport == "http" for choice in choices):
+    if global_transport == "stdio" and any(
+        choice.transport == "http" for choice in choices
+    ):
         warning = _color(
             "Warning: Global transport is set to stdio but HTTP servers were generated.",
             fg="magenta",
@@ -191,6 +201,7 @@ def _prompt_server_selection(
 
     return _prompt_server_selection_fallback(options, default_mode)
 
+
 def _prompt_server_selection_fallback(
     options: Sequence[ServerOption], default_mode: str
 ) -> List[ServerSelection]:
@@ -200,7 +211,9 @@ def _prompt_server_selection_fallback(
         print("\nCurrent selection:")
         for idx, opt in enumerate(options, start=1):
             mark = "x" if (idx - 1) in selected else " "
-            print(f"[{mark}] {idx}. {opt.default_display_name} ({opt.script_path.name})")
+            print(
+                f"[{mark}] {idx}. {opt.default_display_name} ({opt.script_path.name})"
+            )
         raw = input(
             "Enter numbers to toggle selection (comma separated), or press Enter to continue: "
         ).strip()
@@ -228,9 +241,7 @@ def _prompt_server_selection_fallback(
         opt = options[idx]
         while True:
             answer = (
-                input(
-                    f"Use HTTP transport for {opt.default_display_name}? [y/N]: "
-                )
+                input(f"Use HTTP transport for {opt.default_display_name}? [y/N]: ")
                 .strip()
                 .lower()
             )
@@ -268,8 +279,7 @@ def _ensure_http_urls(selections: List[ServerSelection], interactive: bool) -> N
             raw = (
                 input(
                     f"Enter URL for {selection.option.default_display_name} [{suggestion}]: "
-                )
-                .strip()
+                ).strip()
                 or suggestion
             )
             normalized, warnings = _normalize_http_url(raw)
@@ -283,60 +293,88 @@ def _ensure_http_urls(selections: List[ServerSelection], interactive: bool) -> N
             break
 
 
-
 def _normalize_http_url(raw: str) -> tuple[str, list[str]]:
     warnings: list[str] = []
     candidate = raw.strip()
     if not candidate:
         return "", warnings
 
-    if '://' not in candidate:
+    if "://" not in candidate:
         candidate = f"http://{candidate}"
-        warnings.append('No scheme provided; defaulting to http://.')
+        warnings.append("No scheme provided; defaulting to http://.")
 
     parsed = urlparse(candidate)
-    scheme = parsed.scheme.lower() or 'http'
-    if scheme not in {'http', 'https'}:
-        warnings.append(f"Unsupported URL scheme '{parsed.scheme}'. Using http:// instead.")
-        scheme = 'http'
+    scheme = parsed.scheme.lower() or "http"
+    if scheme not in {"http", "https"}:
+        warnings.append(
+            f"Unsupported URL scheme '{parsed.scheme}'. Using http:// instead."
+        )
+        scheme = "http"
 
-    hostname = parsed.hostname or ''
+    hostname = parsed.hostname or ""
     port = parsed.port
-    path = parsed.path or ''
+    path = parsed.path or ""
 
-    local_hosts = {'', '0.0.0.0', '::', '::1'}
+    local_hosts = {"", "0.0.0.0", "::", "::1"}
     if hostname in local_hosts:
-        replacement = '127.0.0.1'
-        warnings.append(f"Host '{hostname or raw}' is not reachable from clients; using '{replacement}'.")
+        replacement = "127.0.0.1"
+        warnings.append(
+            f"Host '{hostname or raw}' is not reachable from clients; using '{replacement}'."
+        )
         hostname = replacement
 
     if port is None and path:
-        stripped = path.lstrip('/')
-        first_segment, _, remainder = stripped.partition('/')
+        stripped = path.lstrip("/")
+        first_segment, _, remainder = stripped.partition("/")
         if first_segment.isdigit():
             port = int(first_segment)
-            path = '/' + remainder if remainder else ''
+            path = "/" + remainder if remainder else ""
             warnings.append(f"Interpreting '/{first_segment}' as port {first_segment}.")
 
     if not path:
-        path = '/mcp'
+        path = "/mcp"
 
-    if scheme == 'https' and hostname in {'127.0.0.1', 'localhost'}:
+    if scheme == "https" and hostname in {"127.0.0.1", "localhost"}:
         warnings.append("Local endpoints do not support HTTPS; switching to http://.")
-        scheme = 'http'
+        scheme = "http"
 
     netloc = hostname if hostname else parsed.netloc
     if port:
         netloc = f"{hostname}:{port}" if hostname else f":{port}"
 
-    rebuilt = urlunparse((scheme, netloc, path, '', '', ''))
+    rebuilt = urlunparse((scheme, netloc, path, "", "", ""))
     return rebuilt, warnings
 
 
+def _prompt_python_sandbox_log_path(
+    base_dir: Path, selections: Sequence[ServerSelection], interactive: bool
+) -> Optional[Path]:
+    sandbox_selected = any(
+        selection.transport == "stdio"
+        and selection.option.identifier == "python-sandbox"
+        for selection in selections
+    )
+    if not sandbox_selected:
+        return None
+
+    suggested = base_dir / "data" / "python-sandbox-audit.jsonl"
+    if not interactive:
+        return suggested.resolve()
+
+    print("\nPython sandbox audit logging is strongly recommended.")
+    print("Each `run_python` execution will append a JSON line to the selected file.")
+    while True:
+        raw = input(f"Python sandbox log file [{suggested}]: ").strip()
+        candidate = Path(raw).expanduser() if raw else suggested
+        try:
+            return candidate.resolve()
+        except OSError as exc:
+            print(f"Invalid path: {exc}")
 
 
-
-def _build_server_choice(selection: ServerSelection, command: str) -> ServerChoice:
+def _build_server_choice(
+    selection: ServerSelection, command: str, sandbox_log_path: Optional[Path]
+) -> ServerChoice:
     option = selection.option
     display = option.default_display_name
     slug = _slugify(option.identifier) or option.identifier.lower()
@@ -348,9 +386,13 @@ def _build_server_choice(selection: ServerSelection, command: str) -> ServerChoi
             command=None,
             script_path=None,
             http_url=selection.http_url or "",
+            env={},
         )
 
     script_path = option.script_path.resolve()
+    env: Dict[str, str] = {}
+    if option.identifier == "python-sandbox" and sandbox_log_path is not None:
+        env["PYTHON_SANDBOX_LOG_PATH"] = str(sandbox_log_path)
     return ServerChoice(
         display_name=display,
         slug=slug,
@@ -358,6 +400,7 @@ def _build_server_choice(selection: ServerSelection, command: str) -> ServerChoi
         command=command,
         script_path=script_path,
         http_url=None,
+        env=env,
     )
 
 
@@ -389,7 +432,9 @@ def _prompt_output_path(data_dir: Path, suggested: str) -> Path:
     print(f"\nConfiguration files will be saved under {data_dir}")
     while True:
         user_input = input(f"Output file name [{suggested}]: ").strip() or suggested
-        filename = user_input if user_input.lower().endswith(".json") else f"{user_input}.json"
+        filename = (
+            user_input if user_input.lower().endswith(".json") else f"{user_input}.json"
+        )
         output_path = data_dir / filename
         if output_path.exists():
             answer = input(f"{output_path} exists. Overwrite? [y/N]: ").strip().lower()
@@ -412,7 +457,7 @@ def _build_vscode_config(choices: List[ServerChoice]) -> dict:
                 "type": "stdio",
                 "command": choice.command,
                 "args": [str(choice.script_path)],
-                "env": {},
+                "env": choice.env or {},
             }
     return {"servers": servers}
 
@@ -429,7 +474,7 @@ def _build_lmstudio_config(choices: List[ServerChoice]) -> dict:
             servers[choice.slug] = {
                 "command": choice.command,
                 "args": [str(choice.script_path)],
-                "env": {},
+                "env": choice.env or {},
             }
     return {"mcpServers": servers}
 
@@ -447,7 +492,7 @@ def _build_cursor_config(choices: List[ServerChoice]) -> dict:
             servers[key] = {
                 "command": choice.command,
                 "args": [str(choice.script_path)],
-                "env": {},
+                "env": choice.env or {},
             }
     return {"mcp": {"servers": servers}}
 

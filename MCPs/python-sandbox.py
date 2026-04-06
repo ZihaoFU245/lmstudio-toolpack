@@ -1,7 +1,26 @@
+##########################################
+# This python sandbox contains use       #
+# of exec(), which is essentially        #
+# arbitrary code execution, and adding   #
+# strict security policy will make code  #
+# complicated and might affect agent     #
+# capabilities.                          #
+#                                        #
+# Instead, I add logging for             #
+# commands that agent executed.          #
+#                                        #
+# CAUTION: Use at your own risk          #
+# provide this server to agent only when #
+# necessary. You MUST NOT run it         #
+# as root user                           #
+##########################################
+
 from fastmcp import FastMCP
 from typing import Optional, Any, Dict, List, Union
 import multiprocessing as mp
 import io, contextlib, time, ast, os, signal, json
+from pathlib import Path
+from datetime import datetime, timezone
 
 # Added scientific stack imports
 import numpy as np
@@ -32,6 +51,29 @@ SAFE_BUILTINS = {
 
 MAX_STDIO = 64_000  # cap stdout/stderr
 MAX_RESULT_BYTES = 128_000
+DEFAULT_LOG_FILENAME = "python-sandbox-audit.jsonl"
+
+
+def _default_log_path() -> Path:
+    return Path(__file__).resolve().parent.parent / "data" / DEFAULT_LOG_FILENAME
+
+
+def _resolve_log_path() -> Path:
+    raw = os.environ.get("PYTHON_SANDBOX_LOG_PATH", "").strip()
+    if not raw:
+        return _default_log_path()
+    return Path(raw).expanduser().resolve()
+
+
+def _append_execution_log(entry: Dict[str, Any]) -> Optional[str]:
+    try:
+        log_path = _resolve_log_path()
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry, ensure_ascii=True, default=str) + "\n")
+    except Exception as exc:
+        return f"{type(exc).__name__}: {exc}"
+    return None
 
 
 def worker_run(src: str, inp: Optional[Dict[str, Any]], q):
@@ -97,11 +139,15 @@ def run_python(
 ) -> Dict[str, Any]:
     """Execute a short Python snippet in a restricted subprocess.
 
-    - Safe builtins only, no imports.
+    - Reduced builtins only, no imports.
     - Captures stdout/stderr.
     - If single expression, returns its value.
     - Otherwise, assign to `result` in code.
+    - Appends an audit record for each execution.
+
+    This is not a secure sandbox. Treat it as untrusted code execution.
     """
+    started_at = datetime.now(timezone.utc).isoformat()
     ctx = mp.get_context("spawn")
     q = ctx.Queue()
     p = ctx.Process(target=worker_run, args=(code, inputs, q))
@@ -113,7 +159,7 @@ def run_python(
         except Exception:
             p.terminate()
         p.join(1)
-        return {
+        response = {
             "stdout": "",
             "stderr": "",
             "result": None,
@@ -121,10 +167,23 @@ def run_python(
             "timed_out": True,
             "duration": timeout_seconds,
         }
+        log_error = _append_execution_log(
+            {
+                "timestamp": started_at,
+                "tool": "run_python",
+                "code": code,
+                "inputs": inputs or {},
+                "timeout_seconds": timeout_seconds,
+                "response": response,
+            }
+        )
+        if log_error:
+            response["log_error"] = log_error
+        return response
     try:
-        return q.get_nowait()
+        response = q.get_nowait()
     except Exception:
-        return {
+        response = {
             "stdout": "",
             "stderr": "",
             "result": None,
@@ -132,6 +191,19 @@ def run_python(
             "timed_out": False,
             "duration": None,
         }
+    log_error = _append_execution_log(
+        {
+            "timestamp": started_at,
+            "tool": "run_python",
+            "code": code,
+            "inputs": inputs or {},
+            "timeout_seconds": timeout_seconds,
+            "response": response,
+        }
+    )
+    if log_error:
+        response["log_error"] = log_error
+    return response
 
 
 # -------------------------- Added MCP Tools using NumPy / SymPy --------------------------
