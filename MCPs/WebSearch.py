@@ -17,6 +17,7 @@ Dependencies:
 Run:
   python web-tools.py
 """
+
 from fastmcp import FastMCP
 import asyncio
 import threading
@@ -78,13 +79,40 @@ AD_BLOCKLIST = {
 }
 # Obvious non-HTML/binary extensions to skip when crawling
 SKIP_EXTENSIONS = {
-    ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg",
-    ".ico", ".bmp", ".tif", ".tiff",
-    ".pdf", ".zip", ".gz", ".tgz", ".rar", ".7z", ".tar",
-    ".exe", ".msi", ".dmg", ".pkg", ".apk",
-    ".mp4", ".mp3", ".mov", ".avi", ".wmv", ".mkv", ".m4a",
-    ".css", ".js", ".json",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".gif",
+    ".webp",
+    ".svg",
+    ".ico",
+    ".bmp",
+    ".tif",
+    ".tiff",
+    ".pdf",
+    ".zip",
+    ".gz",
+    ".tgz",
+    ".rar",
+    ".7z",
+    ".tar",
+    ".exe",
+    ".msi",
+    ".dmg",
+    ".pkg",
+    ".apk",
+    ".mp4",
+    ".mp3",
+    ".mov",
+    ".avi",
+    ".wmv",
+    ".mkv",
+    ".m4a",
+    ".css",
+    ".js",
+    ".json",
 }
+
 
 # ------------------------------
 # Data structures
@@ -96,7 +124,8 @@ class SearchResult:
     url: str
     snippet: str
     meta_description: Optional[str] = None
-    
+
+
 # ------------------------------
 # Async searcher
 # ------------------------------
@@ -111,7 +140,7 @@ class Searcher:
         self.timeout = ClientTimeout(total=timeout_sec)
         self.sem = asyncio.Semaphore(concurrency)
         self.verify_ssl = verify_ssl
-        
+
     async def _fetch(self, session: aiohttp.ClientSession, url: str, **kwargs) -> str:
         async with self.sem:
             async with session.get(
@@ -119,7 +148,7 @@ class Searcher:
             ) as resp:
                 resp.raise_for_status()
                 return await resp.text()
-            
+
     async def search_duckduckgo(
         self, query: str, max_results: int = 10, *, country: str = "us-en"
     ) -> List[SearchResult]:
@@ -137,7 +166,7 @@ class Searcher:
                 lite_html = await self._fetch(session, DUCKDUCKGO_LITE, params=params)
                 results = self._parse_duckduckgo_lite_results(lite_html)
             return results[:max_results]
-        
+
     def _parse_duckduckgo_results(self, html: str) -> List[SearchResult]:
         soup = BeautifulSoup(html, "html.parser")
         out: List[SearchResult] = []
@@ -149,12 +178,14 @@ class Searcher:
             title = re.sub(r"\s+", " ", raw_title).strip()
             href = a.get("href")
             url = self._clean_url(href)
-            snippet_el = res.select_one("a.result__snippet") or res.select_one("div.result__snippet")
+            snippet_el = res.select_one("a.result__snippet") or res.select_one(
+                "div.result__snippet"
+            )
             raw_snippet = snippet_el.get_text() if snippet_el else ""
             snippet = re.sub(r"\s+", " ", raw_snippet).strip()
             out.append(SearchResult(rank=i, title=title, url=url, snippet=snippet))
         return out
-    
+
     def _parse_duckduckgo_lite_results(self, html: str) -> List[SearchResult]:
         soup = BeautifulSoup(html, "html.parser")
         out: List[SearchResult] = []
@@ -189,7 +220,7 @@ class Searcher:
             out.append(SearchResult(rank=rank, title=text, url=url, snippet=snippet))
             rank += 1
         return out
-    
+
     def _clean_url(self, href: Optional[str]) -> str:
         if not href:
             return ""
@@ -206,7 +237,8 @@ class Searcher:
             return str(u)
         except Exception:
             return href
-        
+
+
 # ------------------------------
 # Page fetching & extraction
 # ------------------------------
@@ -226,7 +258,9 @@ async def _visit_website_async(
         created_session = True
     try:
         request_headers = {"Referer": referer} if referer else None
-        async with session.get(url, allow_redirects=True, headers=request_headers) as resp:
+        async with session.get(
+            url, allow_redirects=True, headers=request_headers
+        ) as resp:
             status = resp.status
             final_url = str(resp.url)
             html = await resp.text()
@@ -256,13 +290,23 @@ async def _visit_website_async(
         payload["anchors"] = _collect_anchor_samples(soup, base_url=final_url)
     return payload
 
-async def _visit_many_async(urls: List[str], max_chars: int = 10_000, timeout_sec: int = 20, concurrency: int = 8) -> List[dict]:
+
+async def _visit_many_async(
+    urls: List[str],
+    max_chars: int = 10_000,
+    timeout_sec: int = 20,
+    concurrency: int = 8,
+) -> List[dict]:
     sem = asyncio.Semaphore(concurrency)
     timeout = ClientTimeout(total=timeout_sec)
     async with aiohttp.ClientSession(headers=HTML_HEADERS, timeout=timeout) as session:
+
         async def one(u: str):
             async with sem:
-                return await _visit_website_async(u, max_chars=max_chars, timeout_sec=timeout_sec, session=session)
+                return await _visit_website_async(
+                    u, max_chars=max_chars, timeout_sec=timeout_sec, session=session
+                )
+
         tasks = [one(u) for u in urls]
         results = await asyncio.gather(*tasks, return_exceptions=True)
     out: List[dict] = []
@@ -273,7 +317,10 @@ async def _visit_many_async(urls: List[str], max_chars: int = 10_000, timeout_se
             out.append({"ok": False, "error": str(r)})
     return out
 
-def _extract_title_desc(soup: BeautifulSoup, *, title_limit: Optional[int] = None, desc_limit: int = 500) -> Tuple[str, str]:
+
+def _extract_title_desc(
+    soup: BeautifulSoup, *, title_limit: Optional[int] = None, desc_limit: int = 500
+) -> Tuple[str, str]:
     raw_title = soup.title.get_text() if soup.title else ""
     title = re.sub(r"\s+", " ", raw_title).strip()
     if title_limit:
@@ -296,21 +343,29 @@ def _extract_title_desc(soup: BeautifulSoup, *, title_limit: Optional[int] = Non
             desc = re.sub(r"\s+", " ", p.get_text(strip=True))
     return title, desc[:desc_limit]
 
+
 def _clean_soup(soup: BeautifulSoup) -> None:
     # Remove noise elements, common ad containers and offscreen elements
-    for tag in soup(["script", "style", "noscript", "template", "iframe", "svg", "canvas", "form"]):
+    for tag in soup(
+        ["script", "style", "noscript", "template", "iframe", "svg", "canvas", "form"]
+    ):
         tag.decompose()
     for tag in soup(["nav", "footer", "aside", "header"]):
         tag.decompose()
-    for el in soup.select('[aria-hidden="true"], [role="banner"], [role="complementary"]'):
+    for el in soup.select(
+        '[aria-hidden="true"], [role="banner"], [role="complementary"]'
+    ):
         el.decompose()
     # Remove common ad containers by id/class heuristics
-    for el in soup.select('[id*="ad" i], [class*="ad" i], [id*="sponsor" i], [class*="sponsor" i], [class*="promo" i]'):
+    for el in soup.select(
+        '[id*="ad" i], [class*="ad" i], [id*="sponsor" i], [class*="sponsor" i], [class*="promo" i]'
+    ):
         try:
             el.decompose()
         except Exception:
             pass
-        
+
+
 def _extract_text_and_headings(soup: BeautifulSoup) -> Tuple[str, List[str]]:
     headings: List[str] = []
     for h in soup.find_all(["h1", "h2", "h3"]):
@@ -320,6 +375,7 @@ def _extract_text_and_headings(soup: BeautifulSoup) -> Tuple[str, List[str]]:
     raw = soup.get_text(separator=" ")
     text = re.sub(r"\s+", " ", raw).strip()
     return text, headings
+
 
 def _extract_links(soup: BeautifulSoup, base_url: str) -> List[str]:
     links: List[str] = []
@@ -351,7 +407,10 @@ def _extract_links(soup: BeautifulSoup, base_url: str) -> List[str]:
         links.append(abs_url)
     return links
 
-def _collect_anchor_samples(soup: BeautifulSoup, base_url: str, limit: int = 12) -> List[Tuple[str, str]]:
+
+def _collect_anchor_samples(
+    soup: BeautifulSoup, base_url: str, limit: int = 12
+) -> List[Tuple[str, str]]:
     anchors: List[Tuple[str, str]] = []
     seen: Set[str] = set()
     base_url = base_url or ""
@@ -385,6 +444,7 @@ def _collect_anchor_samples(soup: BeautifulSoup, base_url: str, limit: int = 12)
             break
     return anchors
 
+
 # ------------------------------
 # Utility: Run async from sync
 # ------------------------------
@@ -396,6 +456,7 @@ def _run_async(coro):
         return asyncio.run(coro)
     else:
         container: Dict[str, object] = {}
+
         def runner():
             new_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(new_loop)
@@ -403,17 +464,27 @@ def _run_async(coro):
                 container["result"] = new_loop.run_until_complete(coro)
             finally:
                 new_loop.close()
+
         t = threading.Thread(target=runner, daemon=True)
         t.start()
         t.join()
         return container.get("result")
-    
+
+
 # ------------------------------
 # Formatting helpers
 # ------------------------------
 def _normalize_whitespace(value: Optional[str]) -> str:
     return re.sub(r"\s+", " ", (value or "").strip())
-def _compose_detail(text: Optional[str], anchors: List[Tuple[str, str]], url: str, *, limit: int = MAX_DETAIL_CHARS) -> str:
+
+
+def _compose_detail(
+    text: Optional[str],
+    anchors: List[Tuple[str, str]],
+    url: str,
+    *,
+    limit: int = MAX_DETAIL_CHARS,
+) -> str:
     body = _normalize_whitespace(text)
     truncated = False
     if limit and len(body) > limit:
@@ -433,9 +504,15 @@ def _compose_detail(text: Optional[str], anchors: List[Tuple[str, str]], url: st
         detail_parts.append("Links: " + ", ".join(link_fragments))
     detail = " ".join(detail_parts).strip()
     if truncated:
-        detail = (detail + " " if detail else "") + TRUNCATION_NOTICE.replace("{{ url_target }}", url)
+        detail = (detail + " " if detail else "") + TRUNCATION_NOTICE.replace(
+            "{{ url_target }}", url
+        )
     return detail or "No readable text found."
-def _fmt_detail_block(index: int, title: str, url: str, referer: Optional[str], detail: str) -> str:
+
+
+def _fmt_detail_block(
+    index: int, title: str, url: str, referer: Optional[str], detail: str
+) -> str:
     title = (title or url or "").strip()
     url = (url or "").strip()
     referer_text = _normalize_whitespace(referer) if referer else "None"
@@ -447,6 +524,7 @@ def _fmt_detail_block(index: int, title: str, url: str, referer: Optional[str], 
     ]
     return "\n".join(lines)
 
+
 # ------------------------------
 # Crawl helpers (ad-block + BFS)
 # ------------------------------
@@ -455,13 +533,19 @@ def _host_of(u: URL) -> str:
         return (u.host or "").lower()
     except Exception:
         return ""
+
+
 def _is_ad_domain(host: str) -> bool:
     host = (host or "").lower()
     return any(host == d or host.endswith("." + d) for d in AD_BLOCKLIST)
+
+
 def _same_site(host: str, base_host: str) -> bool:
     host = (host or "").lower()
     base_host = (base_host or "").lower()
     return host == base_host or host.endswith("." + base_host)
+
+
 async def _crawl_bfs_async(
     start_url: str,
     *,
@@ -531,10 +615,13 @@ async def _crawl_bfs_async(
                     q.append((link, depth + 1, parent_final))
     return results
 
+
 # ------------------------------
 # MCP server and single tool
 # ------------------------------
 mcp = FastMCP("Web Search")
+
+
 @mcp.tool("web_search")
 def web_search(
     query: str,
@@ -556,7 +643,9 @@ def web_search(
         q = f"{query} site:{site}"
     searcher = Searcher()
     try:
-        results: List[SearchResult] = _run_async(searcher.search_duckduckgo(q, max_results=max_results)) or []
+        results: List[SearchResult] = (
+            _run_async(searcher.search_duckduckgo(q, max_results=max_results)) or []
+        )
     except Exception:
         results = []
     referer_label = f"DuckDuckGo search: {query}"
@@ -570,12 +659,21 @@ def web_search(
         for idx, r in enumerate(results[:MAX_BLOCKS], start=1):
             snippet = r.meta_description or r.snippet or ""
             detail = _compose_detail(snippet, [], r.url)
-            blocks.append(_fmt_detail_block(idx, r.title or r.url, r.url, referer_label, detail))
+            blocks.append(
+                _fmt_detail_block(idx, r.title or r.url, r.url, referer_label, detail)
+            )
         return "\n\n".join(blocks)
 
     top_count = max(1, min(enrich_pages, max_results, MAX_BLOCKS))
     top_urls = [r.url for r in results[:top_count]]
-    pages = _run_async(_visit_many_async(urls=top_urls, max_chars=15_000, timeout_sec=20, concurrency=6)) or []
+    pages = (
+        _run_async(
+            _visit_many_async(
+                urls=top_urls, max_chars=15_000, timeout_sec=20, concurrency=6
+            )
+        )
+        or []
+    )
     page_by_url: Dict[str, dict] = {}
     for p in pages:
         if isinstance(p, dict):
@@ -586,7 +684,11 @@ def web_search(
     for idx, r in enumerate(results[:MAX_BLOCKS], start=1):
         page = None
         for key, data in page_by_url.items():
-            if key == r.url or data.get("url") == r.url or data.get("final_url") == r.url:
+            if (
+                key == r.url
+                or data.get("url") == r.url
+                or data.get("final_url") == r.url
+            ):
                 page = data
                 break
         title = r.title or r.url
@@ -594,7 +696,13 @@ def web_search(
         if page and page.get("ok"):
             title = page.get("title") or title
             target_url = page.get("final_url") or page.get("url") or target_url
-            text_blob = page.get("text") or page.get("description") or r.meta_description or r.snippet or ""
+            text_blob = (
+                page.get("text")
+                or page.get("description")
+                or r.meta_description
+                or r.snippet
+                or ""
+            )
             anchors = page.get("anchors") or []
             detail = _compose_detail(text_blob, anchors, target_url)
         elif page and not page.get("ok"):
@@ -605,6 +713,7 @@ def web_search(
             detail = _compose_detail(snippet, [], target_url)
         blocks.append(_fmt_detail_block(idx, title, target_url, referer_label, detail))
     return "\n\n".join(blocks)
+
 
 # ------------------------------
 # visit_url tool (BFS crawl)
@@ -624,22 +733,27 @@ def visit_url(
             Referer: None or parent URL
             Detail: Extracted text and sampled links (truncated notice when needed).
     """
-    pages: List[dict] = _run_async(
-        _crawl_bfs_async(
-            url,
-            max_depth=max(0, depth),
-            max_pages=max(1, max_pages),
-            same_domain=bool(same_domain),
-            timeout_sec=20,
-            concurrency=6,
+    pages: List[dict] = (
+        _run_async(
+            _crawl_bfs_async(
+                url,
+                max_depth=max(0, depth),
+                max_pages=max(1, max_pages),
+                same_domain=bool(same_domain),
+                timeout_sec=20,
+                concurrency=6,
+            )
         )
-    ) or []
+        or []
+    )
     if not pages:
         return _fmt_detail_block(1, "No content", url, "None", "No pages visited")
     blocks: List[str] = []
     for idx, page in enumerate(pages[:MAX_BLOCKS], start=1):
         if not isinstance(page, dict):
-            blocks.append(_fmt_detail_block(idx, "Fetch failed", url, "None", "Fetch error"))
+            blocks.append(
+                _fmt_detail_block(idx, "Fetch failed", url, "None", "Fetch error")
+            )
             continue
         ok = bool(page.get("ok"))
         final_url = str(page.get("final_url") or page.get("url") or url)
@@ -659,17 +773,22 @@ def visit_url(
         blocks.append(_fmt_detail_block(idx, title, final_url, referer, detail))
     return "\n\n".join(blocks)
 
+
 # ------------------------------
 # Main (HTTP server)
 # ------------------------------
 if __name__ == "__main__":
     import sys
     from pathlib import Path
+
     sys.path.insert(0, str(Path(__file__).parent.parent))
     from GlobalConfig import GlobalConfig
     import asyncio
-    
-    if GlobalConfig.transport == "http":
-        asyncio.run(mcp.run_http_async(GlobalConfig.port) if GlobalConfig.port else mcp.run_http_async()) 
+
+    config = GlobalConfig()
+    if config.transport == "http":
+        asyncio.run(
+            mcp.run_http_async(config.port) if config.port else mcp.run_http_async()
+        )
     else:
         asyncio.run(mcp.run_stdio_async())

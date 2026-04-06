@@ -10,15 +10,29 @@ import sympy as sp
 mcp = FastMCP("Python SandBox")
 
 SAFE_BUILTINS = {
-    "abs": abs, "min": min, "max": max, "sum": sum,
-    "range": range, "len": len, "enumerate": enumerate,
-    "zip": zip, "map": map, "filter": filter,
-    "list": list, "dict": dict, "set": set, "tuple": tuple,
-    "sorted": sorted, "any": any, "all": all, "print": print,
+    "abs": abs,
+    "min": min,
+    "max": max,
+    "sum": sum,
+    "range": range,
+    "len": len,
+    "enumerate": enumerate,
+    "zip": zip,
+    "map": map,
+    "filter": filter,
+    "list": list,
+    "dict": dict,
+    "set": set,
+    "tuple": tuple,
+    "sorted": sorted,
+    "any": any,
+    "all": all,
+    "print": print,
 }
 
-MAX_STDIO = 64_000    # cap stdout/stderr
+MAX_STDIO = 64_000  # cap stdout/stderr
 MAX_RESULT_BYTES = 128_000
+
 
 def worker_run(src: str, inp: Optional[Dict[str, Any]], q):
     start = time.time()
@@ -33,9 +47,14 @@ def worker_run(src: str, inp: Optional[Dict[str, Any]], q):
         except SyntaxError:
             is_expr = False
 
-        with contextlib.redirect_stdout(stdout_buf), contextlib.redirect_stderr(stderr_buf):
+        with (
+            contextlib.redirect_stdout(stdout_buf),
+            contextlib.redirect_stderr(stderr_buf),
+        ):
             if is_expr and isinstance(node, ast.Expression):
-                result = eval(compile(node, "<string>", "eval"), globals_env, locals_env)
+                result = eval(
+                    compile(node, "<string>", "eval"), globals_env, locals_env
+                )
             else:
                 compiled = compile(src, "<string>", "exec")
                 exec(compiled, globals_env, locals_env)
@@ -49,27 +68,33 @@ def worker_run(src: str, inp: Optional[Dict[str, Any]], q):
         except Exception as e:
             payload = {"_error": f"SerializeError: {e}"}
 
-        q.put({
-            "stdout": stdout_buf.getvalue()[:MAX_STDIO],
-            "stderr": stderr_buf.getvalue()[:MAX_STDIO],
-            "result": payload,
-            "error": None,
-            "timed_out": False,
-            "duration": time.time() - start,
-        })
+        q.put(
+            {
+                "stdout": stdout_buf.getvalue()[:MAX_STDIO],
+                "stderr": stderr_buf.getvalue()[:MAX_STDIO],
+                "result": payload,
+                "error": None,
+                "timed_out": False,
+                "duration": time.time() - start,
+            }
+        )
     except Exception as e:
-        q.put({
-            "stdout": stdout_buf.getvalue(),
-            "stderr": stderr_buf.getvalue(),
-            "result": None,
-            "error": f"{type(e).__name__}: {e}",
-            "timed_out": False,
-            "duration": time.time() - start,
-        })
+        q.put(
+            {
+                "stdout": stdout_buf.getvalue(),
+                "stderr": stderr_buf.getvalue(),
+                "result": None,
+                "error": f"{type(e).__name__}: {e}",
+                "timed_out": False,
+                "duration": time.time() - start,
+            }
+        )
 
 
 @mcp.tool
-def run_python(code: str, inputs: Optional[Dict[str, Any]] = None, timeout_seconds: float = 5.0) -> Dict[str, Any]:
+def run_python(
+    code: str, inputs: Optional[Dict[str, Any]] = None, timeout_seconds: float = 5.0
+) -> Dict[str, Any]:
     """Execute a short Python snippet in a restricted subprocess.
 
     - Safe builtins only, no imports.
@@ -88,20 +113,29 @@ def run_python(code: str, inputs: Optional[Dict[str, Any]] = None, timeout_secon
         except Exception:
             p.terminate()
         p.join(1)
-        return {"stdout": "", "stderr": "", "result": None, "error": "Timeout",
-                "timed_out": True, "duration": timeout_seconds}
+        return {
+            "stdout": "",
+            "stderr": "",
+            "result": None,
+            "error": "Timeout",
+            "timed_out": True,
+            "duration": timeout_seconds,
+        }
     try:
         return q.get_nowait()
     except Exception:
-        return {"stdout": "", "stderr": "", "result": None, "error": "No result",
-                "timed_out": False, "duration": None}
+        return {
+            "stdout": "",
+            "stderr": "",
+            "result": None,
+            "error": "No result",
+            "timed_out": False,
+            "duration": None,
+        }
 
-
-if __name__ == "__main__":
-    import asyncio
-    asyncio.run(mcp.run_stdio_async())
 
 # -------------------------- Added MCP Tools using NumPy / SymPy --------------------------
+
 
 @mcp.tool
 def numpy_stats(data: List[Union[int, float]]) -> Dict[str, float]:
@@ -144,8 +178,8 @@ def sympy_analyze(expr: str, solve_for: Optional[str] = None) -> Dict[str, Any]:
     """
     try:
         # Handle equation case if '=' present
-        if '=' in expr:
-            left_str, right_str = expr.split('=', 1)
+        if "=" in expr:
+            left_str, right_str = expr.split("=", 1)
             left = sp.sympify(left_str)
             right = sp.sympify(right_str)
             sym_expr = left - right
@@ -179,14 +213,19 @@ def sympy_analyze(expr: str, solve_for: Optional[str] = None) -> Dict[str, Any]:
     except Exception as e:
         return {"error": f"ParseError: {type(e).__name__}: {e}", "input": expr}
 
+
 if __name__ == "__main__":
     import sys
     from pathlib import Path
+
     sys.path.insert(0, str(Path(__file__).parent.parent))
     from GlobalConfig import GlobalConfig
     import asyncio
-    
-    if GlobalConfig.transport == "http":
-        asyncio.run(mcp.run_http_async(GlobalConfig.port) if GlobalConfig.port else mcp.run_http_async()) 
+
+    config = GlobalConfig()
+    if config.transport == "http":
+        asyncio.run(
+            mcp.run_http_async(config.port) if config.port else mcp.run_http_async()
+        )
     else:
         asyncio.run(mcp.run_stdio_async())
